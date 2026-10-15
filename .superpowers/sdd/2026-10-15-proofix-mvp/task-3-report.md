@@ -56,3 +56,30 @@ Complete.
 
 - The focused command requires `PYTHONPATH=src` in this src-layout repository; `make test` supplies it automatically.
 - Snapshot creation and Git worktree cleanup require the standard Git CLI; no third-party Python dependencies were added.
+
+## Fix round 2
+
+### Status
+
+Complete.
+
+### Commit
+
+`3976dbd` — `fix: close remaining task 3 credential leaks`
+
+### Changes
+
+- Classified provider credential-file/value environment names such as `GOOGLE_CLOUD_KEYFILE_JSON` as sensitive, preventing embedded private-key JSON from being exposed.
+- Expanded root-level SSH private-key exclusion to `id_ecdsa`, `id_dsa`, and `id_xmss` alongside the existing key names.
+- Added direct provider-value redaction coverage and tracked/untracked SSH-key snapshot coverage.
+
+### Exact checks and results
+
+- `PYTHONPATH=src python -m unittest tests.test_safety -v`: passed; 9 focused tests ran successfully.
+- `make test`: passed; 23 tests ran successfully.
+- `git diff --check`: passed.
+
+### Concerns
+
+- The focused command requires `PYTHONPATH=src` in this src-layout repository; `make test` supplies it automatically.
+- Snapshot creation and Git worktree cleanup require the standard Git CLI; no third-party Python dependencies were added.
