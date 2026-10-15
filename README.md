@@ -11,8 +11,9 @@ does not deploy a hosted service.
 - Git (required by the later disposable-worktree workflow)
 - Docker, only for the container workflow
 
-The repository pins Python with `.python-version` and declares no third-party
-Python dependencies in `pyproject.toml`.
+The repository pins Python with `.python-version`, declares no third-party
+Python dependencies in `pyproject.toml`, and records that empty dependency set
+in the portable `requirements.lock` file.
 
 ## Setup
 
@@ -57,8 +58,8 @@ default; it is not an internet-facing deployment.
 
 ## Docker
 
-Build the reproducible image (the build installs Git and runs the same offline
-test command):
+Build the reproducible image (the build installs Git and Make, then runs the
+same offline test command):
 
 ```sh
 docker build -t proofix .

@@ -8,3 +8,4 @@ dependencies = []
 [tool.proofix]
 runtime = "python3.12"
 standard_library_only = true
+dependency_lock = "requirements.lock"
