@@ -16,7 +16,12 @@ from .paths import ensure_contained
 
 
 _SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".secret"}
-_SECRET_NAMES = {".env", ".env.local", ".env.production", ".env.development", "credentials", "credentials.json", "secrets.json"}
+_SECRET_NAMES = {
+    ".env", ".envrc", ".env.local", ".env.production", ".env.development",
+    ".netrc", ".npmrc", ".pypirc", ".git-credentials", ".boto",
+    "credentials", "credentials.json", "secrets.json", "auth.json",
+    ".aws", ".azure", ".docker", ".gnupg", ".kube", ".ssh",
+}
 
 
 def _is_secret_name(name: str) -> bool:
@@ -25,17 +30,34 @@ def _is_secret_name(name: str) -> bool:
         return True
     if lowered.startswith(".env.") and lowered not in {".env.example", ".env.sample", ".env.template"}:
         return True
+    if lowered.startswith("credentials.") or lowered.startswith("secrets."):
+        return True
     if lowered.endswith(tuple(_SECRET_SUFFIXES)):
         return True
     if lowered.startswith("id_rsa") or lowered.startswith("id_ed25519"):
         return True
-    return lowered in {".aws", ".ssh"}
+    return False
+
+
+def _is_secret_path(path: Path) -> bool:
+    if _is_secret_name(path.name):
+        return True
+    parts = {part.casefold() for part in path.parts}
+    if ".docker" in parts and path.name.casefold() == "config.json":
+        return True
+    if ".kube" in parts and path.name.casefold() == "config":
+        return True
+    if ".aws" in parts and path.name.casefold() in {"credentials", "config"}:
+        return True
+    if ".ssh" in parts:
+        return True
+    return False
 
 
 def _copy_ignore(directory: str, names: list[str]) -> set[str]:
     ignored: set[str] = set()
     for name in names:
-        if name == ".git" or _is_secret_name(name):
+        if name == ".git" or _is_secret_path(Path(directory) / name):
             ignored.add(name)
     return ignored
 
@@ -54,7 +76,7 @@ def _remove_secret_files(root: Path) -> None:
     for directory, names, files in os.walk(root, topdown=True, followlinks=False):
         directory_path = Path(directory)
         for name in list(names):
-            if _is_secret_name(name):
+            if _is_secret_path(directory_path / name):
                 path = directory_path / name
                 if path.is_dir() and not path.is_symlink():
                     shutil.rmtree(path)
@@ -62,7 +84,7 @@ def _remove_secret_files(root: Path) -> None:
                     path.unlink(missing_ok=True)
                 names.remove(name)
         for name in files:
-            if _is_secret_name(name):
+            if _is_secret_path(directory_path / name):
                 (directory_path / name).unlink(missing_ok=True)
 
 
@@ -106,9 +128,7 @@ class WorkspaceManager:
 
     def __init__(self, run_root: os.PathLike[str] | str):
         self.run_root = Path(run_root).expanduser().resolve(strict=False)
-        self.run_root.mkdir(parents=True, exist_ok=True)
         self._workspaces_root = self.run_root / "workspaces"
-        self._workspaces_root.mkdir(parents=True, exist_ok=True)
         self._token = object()
 
     def snapshot_repository(
@@ -133,7 +153,10 @@ class WorkspaceManager:
         if normalized_mode not in {"clean", "include_dirty"}:
             raise ValueError("snapshot_mode must be 'clean' or 'include_dirty'")
         git_root = self._git_root(source)
+        if source != git_root:
+            raise ValueError("repository path must be the Git worktree root")
         commit = self._git_output(git_root, "rev-parse", "HEAD")
+        self._ensure_run_root()
         destination = self._new_destination()
         materialization = "copy"
         try:
@@ -163,6 +186,10 @@ class WorkspaceManager:
             manager_token=self._token,
         )
 
+    def _ensure_run_root(self) -> None:
+        self.run_root.mkdir(parents=True, exist_ok=True)
+        self._workspaces_root.mkdir(parents=True, exist_ok=True)
+
     def cleanup(self, snapshot: WorkspaceSnapshot) -> None:
         """Remove only a live snapshot created by this manager."""
 
@@ -174,8 +201,8 @@ class WorkspaceManager:
         if snapshot.materialization == "git-worktree":
             try:
                 self._git(snapshot.repository, "worktree", "remove", "--force", str(path))
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                pass
+            except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+                raise RuntimeError("could not remove Git worktree registration") from exc
         if path.exists() or path.is_symlink():
             if path.is_dir() and not path.is_symlink():
                 shutil.rmtree(path)
@@ -197,12 +224,7 @@ class WorkspaceManager:
         subprocess.run(["git", *args], cwd=repository, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     def _git_root(self, repository: Path) -> Path:
-        root = Path(self._git_output(repository, "rev-parse", "--show-toplevel")).resolve()
-        try:
-            root.relative_to(self.run_root)
-        except ValueError:
-            return root
-        raise ValueError("run root may not be inside the source repository")
+        return Path(self._git_output(repository, "rev-parse", "--show-toplevel")).resolve()
 
     @staticmethod
     def _copy_working_tree(source: Path, destination: Path) -> None:
