@@ -56,3 +56,29 @@ Complete.
 ### Concerns
 
 - The focused command requires `PYTHONPATH=src` in this src-layout repository; `make test` supplies it automatically.
+
+## Fix round 2
+
+### Status
+
+Complete.
+
+### Commit
+
+`b8d3486` — `fix: enforce nested log and UTC validation`
+
+### Changes
+
+- Recursively validate oversized inline strings inside nested mappings and sequences, while retaining artifact-reference support.
+- Require persisted timestamps to use the project's canonical UTC `Z` representation and reject non-UTC offsets.
+- Added regression tests for oversized list entries and offset timestamps.
+
+### Exact checks and results
+
+- `PYTHONPATH=src python -m unittest tests.test_state -v`: passed; 13 focused tests ran successfully.
+- `make test`: passed; 14 tests ran successfully, including the smoke test.
+- `git diff --check`: passed.
+
+### Concerns
+
+- The focused command requires `PYTHONPATH=src` in this src-layout repository; `make test` supplies it automatically.
