@@ -312,21 +312,15 @@ def _reject_unquoted_shell_operators(command: str) -> None:
 
 
 def _reject_command_string_forms(executable: str, arguments: Sequence[str]) -> None:
-    """Reject interpreter flags whose operand is source or shell text."""
-    lowered = executable.casefold()
-    shell = lowered in {"sh", "bash", "dash", "zsh", "fish", "ksh", "csh", "tcsh"}
-    interpreter = lowered in {"python", "python3", "node", "nodejs", "ruby", "perl", "php"}
-    flags = {"-c", "--command", "--eval", "-e", "--execute"}
-    if interpreter:
-        flags.update({"-p", "--print"})
+    """Reject source/shell-string flags, including bundled and custom names."""
+    del executable
+    flags = {"-c", "--command", "--eval", "-e", "--execute", "--print"}
     for argument in arguments:
-        if argument == "-" and (shell or interpreter):
-            raise ValueError("stdin command execution is not allowed")
         if argument in flags:
             raise ValueError("command-string execution is not allowed")
-        if shell and argument.startswith("-c") and argument != "-C":
-            raise ValueError("command-string execution is not allowed")
-        if interpreter and (argument.startswith("--eval=") or argument.startswith("--command=") or argument.startswith("-e") or argument.startswith("-c")):
+        if argument == "-":
+            raise ValueError("stdin command execution is not allowed")
+        if argument.startswith(("-c", "-e", "--eval=", "--command=", "--execute=", "--print=")):
             raise ValueError("command-string execution is not allowed")
 
 
@@ -493,12 +487,28 @@ def _capture_process(
         selector.register(stream, selectors.EVENT_READ, name)
     deadline = time.monotonic() + timeout_seconds
     timed_out = False
+    termination_deadline: float | None = None
     try:
-        while selector.get_map():
+        while True:
             now = time.monotonic()
             if not timed_out and now >= deadline:
                 timed_out = True
                 _terminate_process_group(process)
+                termination_deadline = time.monotonic() + 0.5
+
+            registered = selector.get_map()
+            if not registered:
+                if process.poll() is not None:
+                    break
+                if timed_out:
+                    _reap_process_bounded(process)
+                    break
+                time.sleep(min(0.05, max(0.0, deadline - now)))
+                continue
+
+            if timed_out and termination_deadline is not None and now >= termination_deadline:
+                _reap_process_bounded(process)
+                break
             wait_for = 0.05 if timed_out else max(0.0, min(0.05, deadline - now))
             events = selector.select(wait_for)
             if not events:
@@ -519,7 +529,8 @@ def _capture_process(
                     buffers[name].extend(chunk[:remaining])
                 if len(chunk) > max(0, remaining):
                     truncated[name] = True
-        process.wait()
+        if process.poll() is None:
+            _reap_process_bounded(process)
     finally:
         selector.close()
         for stream in (process.stdout, process.stderr):
@@ -528,14 +539,33 @@ def _capture_process(
     return bytes(buffers["stdout"]), bytes(buffers["stderr"]), truncated["stdout"], truncated["stderr"], timed_out
 
 
+def _reap_process_bounded(process: subprocess.Popen[bytes], timeout: float = 0.5) -> None:
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            return
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            pass
+
+
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
     try:
         os.killpg(process.pid, signal.SIGTERM)
-        deadline = time.monotonic() + 0.5
-        while process.poll() is None and time.monotonic() < deadline:
-            time.sleep(0.01)
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
+    except (AttributeError, ProcessLookupError, PermissionError):
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+    grace_deadline = time.monotonic() + 0.5
+    while time.monotonic() < grace_deadline:
+        time.sleep(0.01)
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
     except (AttributeError, ProcessLookupError, PermissionError):
         try:
             process.kill()

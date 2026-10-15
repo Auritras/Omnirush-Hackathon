@@ -1,7 +1,10 @@
 import json
 import hashlib
+import os
 from pathlib import Path
+import shutil
 import tempfile
+import sys
 import time
 import unittest
 
@@ -12,6 +15,26 @@ def _script(workspace: Path, name: str, source: str) -> str:
     path = workspace / name
     path.write_text(source, encoding="utf-8")
     return name
+
+
+def _assert_pid_gone(test_case: unittest.TestCase, pid_file: Path) -> None:
+    deadline = time.monotonic() + 1.0
+    while not pid_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    test_case.assertTrue(pid_file.exists(), "child did not record its pid")
+    pid = int(pid_file.read_text(encoding="utf-8"))
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            return
+        proc_stat = Path(f"/proc/{pid}/stat")
+        if proc_stat.exists() and len(proc_stat.read_text(encoding="utf-8").split()) > 2 and proc_stat.read_text(encoding="utf-8").split()[2] == "Z":
+            return
+        time.sleep(0.02)
+    test_case.fail(f"child process {pid} remained alive after timeout")
 
 
 class RunnerTests(unittest.TestCase):
@@ -48,6 +71,27 @@ class RunnerTests(unittest.TestCase):
                     self.assertTrue(result.blocked)
             self.assertFalse(marker.exists())
             self.assertFalse((workspace / "escaped.txt").exists())
+
+    def test_versioned_and_custom_allowlisted_interpreters_reject_bundled_eval_flags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            marker = workspace / "marker"
+            versioned = "python3.11"
+            policy = CommandPolicy(allowed_commands={versioned, "custom-python"})
+            commands = (
+                [f"./{versioned}", "-cpass"],
+                [f"./{versioned}", "-eprint(1)"],
+            )
+            shutil.copy2(sys.executable, workspace / versioned)
+            shutil.copy2(sys.executable, workspace / "custom-python")
+            (workspace / versioned).chmod(0o755)
+            (workspace / "custom-python").chmod(0o755)
+            commands += (("./custom-python", "-cpass"),)
+            for command in commands:
+                with self.subTest(command=command):
+                    result = run_command(command, workspace, policy=policy)
+                    self.assertTrue(result.blocked)
+            self.assertFalse(marker.exists())
 
     def test_absolute_paths_cwd_escapes_and_disallowed_commands_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -95,6 +139,54 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(result.stdout_digest, "sha256:" + __import__("hashlib").sha256(artifact.read_bytes()).hexdigest())
             time.sleep(0.2)
             self.assertFalse(survived.exists(), "child process continued after timeout")
+            _assert_pid_gone(self, pid_file)
+
+    def test_timeout_escalates_after_parent_exits_and_child_ignores_sigterm(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            _script(
+                workspace,
+                "ignore-term-child.py",
+                "import pathlib, signal, sys, time\nsignal.signal(signal.SIGTERM, lambda *_: None)\npathlib.Path(sys.argv[1]).write_text(str(__import__('os').getpid()))\ntime.sleep(30)\npathlib.Path(sys.argv[2]).write_text('child survived')\n",
+            )
+            parent = _script(
+                workspace,
+                "ignore-term-parent.py",
+                "import subprocess, sys, time\nsubprocess.Popen([sys.executable, 'ignore-term-child.py', sys.argv[1], sys.argv[2]])\ntime.sleep(30)\n",
+            )
+            pid_file = workspace / "ignored-child.pid"
+            survived = workspace / "ignored-child-survived"
+            started = time.monotonic()
+            result = run_command(
+                ["python", parent, pid_file.name, survived.name],
+                workspace,
+                policy=CommandPolicy(allowed_commands={"python"}, timeout_seconds=0.2),
+            )
+            elapsed = time.monotonic() - started
+            self.assertTrue(result.timed_out)
+            self.assertLess(elapsed, 2.0)
+            time.sleep(0.2)
+            self.assertFalse(survived.exists(), "SIGTERM-ignoring child survived escalation")
+            _assert_pid_gone(self, pid_file)
+
+    def test_closed_pipes_do_not_bypass_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            script = _script(
+                workspace,
+                "closed-pipes.py",
+                "import pathlib, sys, time\nsys.stdout.close()\nsys.stderr.close()\ntime.sleep(30)\npathlib.Path('closed-pipes-survived').write_text('survived')\n",
+            )
+            started = time.monotonic()
+            result = run_command(
+                ["python", script],
+                workspace,
+                policy=CommandPolicy(allowed_commands={"python"}, timeout_seconds=0.2),
+            )
+            elapsed = time.monotonic() - started
+            self.assertTrue(result.timed_out)
+            self.assertLess(elapsed, 2.0)
+            self.assertFalse((workspace / "closed-pipes-survived").exists())
 
     def test_stderr_has_a_full_artifact_and_environment_policy_is_explicit(self):
         with tempfile.TemporaryDirectory() as directory:
