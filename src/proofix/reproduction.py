@@ -8,6 +8,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from .redaction import redact_text
 from .runner import CommandResult
 
 
@@ -43,7 +44,7 @@ def compare_failure(input_failure: Any, command_result: CommandResult) -> Reprod
     actual_code = command_result.exit_code
     evidence = _failure_evidence(input_failure)
     normalized_expected = _normalize(evidence)
-    normalized_actual = _normalize(f"{command_result.stdout}\n{command_result.stderr}")
+    normalized_actual = _normalize(f"{command_result.artifact_text('stdout')}\n{command_result.artifact_text('stderr')}")
     if actual_code == 0:
         return ReproductionAssessment(ReproductionStatus.not_reproduced, "command succeeded", expected_code, actual_code, normalized_expected)
     if command_result.timed_out and not _expects_timeout(input_failure):
@@ -93,11 +94,12 @@ def _get(value: Any, *names: str) -> Any:
 
 
 def _normalize(value: str) -> str:
+    value = redact_text(value)[0]
     value = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", value)
     value = re.sub(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b", "<TIMESTAMP>", value)
     value = re.sub(r"\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b", "<TIME>", value)
     value = re.sub(r"(?:[A-Za-z]:[\\/]|/)[^\s:'\"]+", "<PATH>", value)
-    value = re.sub(r"\b(?:pid|process|worker)[=:# ]+\d+\b", lambda match: re.sub(r"\d+", "<PID>", match.group(0), count=1), value, flags=re.IGNORECASE)
+    value = re.sub(r"\b(?:pid|process|worker|child|pytest|test|run)[=:# _-]+\d+\b", lambda match: re.sub(r"\d+", "<PID>", match.group(0), count=1), value, flags=re.IGNORECASE)
     return " ".join(value.casefold().split())
 
 

@@ -1,18 +1,26 @@
 import json
-import os
+import hashlib
 from pathlib import Path
 import tempfile
+import time
 import unittest
 
 from proofix.runner import CommandPolicy, run_command
+
+
+def _script(workspace: Path, name: str, source: str) -> str:
+    path = workspace / name
+    path.write_text(source, encoding="utf-8")
+    return name
 
 
 class RunnerTests(unittest.TestCase):
     def test_allowlisted_command_runs_in_the_workspace(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
+            script = _script(workspace, "cwd.py", "from pathlib import Path\nprint(Path.cwd().name)\n")
             result = run_command(
-                ["python", "-c", "from pathlib import Path; print(Path.cwd().name)"],
+                ["python", script],
                 workspace,
                 policy=CommandPolicy(allowed_commands={"python"}),
             )
@@ -22,46 +30,100 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(result.stdout.strip(), workspace.name)
             self.assertIn("PATH", result.environment_metadata["names"])
 
-    def test_unsafe_and_disallowed_commands_are_rejected_without_execution(self):
+    def test_shell_and_eval_forms_are_rejected_without_executing_marker(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
-            policy = CommandPolicy(allowed_commands={"python"})
+            marker = workspace / "marker"
+            policy = CommandPolicy(allowed_commands={"python", "sh", "bash", "node"})
             commands = (
-                "python -c 'print(1)' > escaped.txt",
-                ["python", str(Path(directory).parent / "outside.py")],
-                ["rm", "-rf", "marker"],
+                ["sh", "-c", f"touch {marker}"],
+                ["bash", "-c", f"touch {marker}"],
+                ["python", "-c", f"open({str(marker)!r}, 'w').write('x')"],
+                ["node", "-e", f"require('fs').writeFileSync({str(marker)!r}, 'x')"],
+                "python script.py > escaped.txt",
             )
             for command in commands:
                 with self.subTest(command=command):
                     result = run_command(command, workspace, policy=policy)
                     self.assertTrue(result.blocked)
+            self.assertFalse(marker.exists())
+            self.assertFalse((workspace / "escaped.txt").exists())
 
-    def test_timeout_terminates_child_bounds_inline_output_and_writes_artifact(self):
+    def test_absolute_paths_cwd_escapes_and_disallowed_commands_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            outside = root.parent / f"{root.name}-outside"
+            workspace.mkdir()
+            outside.mkdir()
+            policy = CommandPolicy(allowed_commands={"python"}, workspace_root=root)
+            script = _script(workspace, "touch.py", "from pathlib import Path\nPath('marker').touch()\n")
+            self.assertTrue(run_command(["python", str(outside / "outside.py")], workspace, policy=policy).blocked)
+            self.assertTrue(run_command(["python", "../outside/outside.py"], workspace, policy=policy).blocked)
+            self.assertTrue(run_command(["rm", "-rf", "marker"], workspace, policy=policy).blocked)
+            self.assertTrue(run_command(["python", script], outside, policy=policy).blocked)
+            outside.rmdir()
+
+    def test_timeout_terminates_child_process_and_bounds_capture(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
-            result = run_command(
-                [
-                    "python",
-                    "-c",
-                    "import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); print('x' * 10000, flush=True); time.sleep(30)",
-                ],
+            child = _script(
                 workspace,
-                policy=CommandPolicy(allowed_commands={"python"}, timeout_seconds=0.2, max_inline_output=80),
+                "child.py",
+                "import pathlib, sys, time\npathlib.Path(sys.argv[1]).write_text(str(__import__('os').getpid()))\ntime.sleep(30)\npathlib.Path(sys.argv[2]).write_text('child survived')\n",
+            )
+            parent = _script(
+                workspace,
+                "parent.py",
+                "import pathlib, subprocess, sys, time\nsubprocess.Popen([sys.executable, 'child.py', sys.argv[1], sys.argv[2]])\nprint('x' * 100000, flush=True)\ntime.sleep(30)\n",
+            )
+            pid_file = workspace / "child.pid"
+            survived = workspace / "child-survived"
+            result = run_command(
+                ["python", parent, pid_file.name, survived.name],
+                workspace,
+                policy=CommandPolicy(allowed_commands={"python"}, timeout_seconds=0.3, max_inline_output=80, max_output_bytes=2048),
             )
 
             self.assertTrue(result.timed_out)
-            self.assertTrue(result.blocked is False)
+            self.assertFalse(result.blocked)
             self.assertLessEqual(len(result.stdout), 80)
+            self.assertTrue(result.stdout_truncated)
             self.assertTrue(result.stdout_artifact_ref)
             artifact = workspace / result.stdout_artifact_ref
             self.assertTrue(artifact.exists())
             self.assertEqual(result.stdout_digest, "sha256:" + __import__("hashlib").sha256(artifact.read_bytes()).hexdigest())
+            time.sleep(0.2)
+            self.assertFalse(survived.exists(), "child process continued after timeout")
+
+    def test_stderr_has_a_full_artifact_and_environment_policy_is_explicit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            script = _script(workspace, "stderr.py", "import os, sys\nprint(os.environ.get('MODE', 'missing'), file=sys.stderr)\n")
+            denied = run_command(
+                ["python", script],
+                workspace,
+                policy=CommandPolicy(allowed_commands={"python"}, environment_allowlist={"OTHER"}),
+                environment={"MODE": "test"},
+            )
+            self.assertTrue(denied.blocked)
+            result = run_command(
+                ["python", script],
+                workspace,
+                policy=CommandPolicy(allowed_commands={"python"}, environment_allowlist={"MODE"}),
+                environment={"MODE": "test"},
+            )
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual((workspace / result.stderr_artifact_ref).read_text(encoding="utf-8"), "test\n")
+            self.assertEqual(result.stderr, "test\n")
 
     def test_environment_metadata_has_names_without_secret_values(self):
         with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            script = _script(workspace, "env.py", "import os\nprint(os.environ['API_KEY'])\n")
             result = run_command(
-                ["python", "-c", "import os; print(os.environ['API_KEY'])"],
-                Path(directory),
+                ["python", script],
+                workspace,
                 policy=CommandPolicy(allowed_commands={"python"}),
                 environment={"API_KEY": "never-store-this", "BUILD_ID": "42"},
             )
@@ -69,6 +131,39 @@ class RunnerTests(unittest.TestCase):
             self.assertNotIn("never-store-this", json.dumps(result.to_dict()))
             self.assertIn("API_KEY", result.environment_metadata["names"])
             self.assertNotIn("never-store-this", result.stderr + result.stdout)
+
+    def test_artifact_symlink_escape_is_blocked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            outside = root / "outside"
+            workspace.mkdir()
+            outside.mkdir()
+            (workspace / "artifacts").symlink_to(outside, target_is_directory=True)
+            script = _script(workspace, "ok.py", "print('ok')\n")
+            result = run_command(
+                ["python", script],
+                workspace,
+                policy=CommandPolicy(allowed_commands={"python"}, workspace_root=root, artifact_dir=workspace / "artifacts"),
+            )
+            self.assertTrue(result.blocked)
+            self.assertFalse(list(outside.iterdir()))
+
+    def test_final_artifact_symlink_is_not_replaced_or_followed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            outside = root / "outside"
+            workspace.mkdir()
+            outside.mkdir()
+            artifacts = workspace / ".proofix-artifacts"
+            artifacts.mkdir()
+            digest = hashlib.sha256(b"ok\n").hexdigest()
+            (artifacts / f"stdout-{digest}.log").symlink_to(outside / "escaped.log")
+            script = _script(workspace, "ok.py", "print('ok')\n")
+            result = run_command(["python", script], workspace, policy=CommandPolicy(allowed_commands={"python"}))
+            self.assertTrue(result.blocked)
+            self.assertFalse((outside / "escaped.log").exists())
 
     def test_missing_executable_and_required_input_are_blocked(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -79,7 +174,7 @@ class RunnerTests(unittest.TestCase):
                 policy=CommandPolicy(allowed_commands={"proofix-runtime-that-does-not-exist"}),
             )
             missing_input = run_command(
-                ["python", "-c", "print('unreachable')"],
+                ["python", "missing.py"],
                 workspace,
                 policy=CommandPolicy(allowed_commands={"python"}, required_inputs=("input.txt",)),
             )
