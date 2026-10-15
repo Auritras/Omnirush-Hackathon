@@ -65,6 +65,10 @@ class RedactionTests(unittest.TestCase):
             {
                 "API_KEY": "do-not-export",
                 "GITHUB_TOKEN": "ghp_1234567890abcdefghijklmnopqrstuvwxyz",
+                "AWS_ACCESS_KEY_ID": "AKIAIOSFODNN7EXAMPLE",
+                "AZURE_CLIENT_SECRET": "azure-client-secret",
+                "GOOGLE_APPLICATION_CREDENTIALS": "/secrets/service-account.json",
+                "DOCKER_AUTH_CONFIG": "{\"auths\":{}}",
                 "CI": "true",
                 "BUILD_NUMBER": "42",
             }
@@ -73,7 +77,8 @@ class RedactionTests(unittest.TestCase):
         self.assertEqual(redacted["BUILD_NUMBER"], "42")
         self.assertNotIn("do-not-export", redacted.values())
         self.assertNotIn("ghp_1234567890abcdefghijklmnopqrstuvwxyz", redacted.values())
-        self.assertEqual(redacted["API_KEY"], "[REDACTED]")
+        for name in ("API_KEY", "GITHUB_TOKEN", "AWS_ACCESS_KEY_ID", "AZURE_CLIENT_SECRET", "GOOGLE_APPLICATION_CREDENTIALS", "DOCKER_AUTH_CONFIG"):
+            self.assertEqual(redacted[name], "[REDACTED]")
 
 
 class WorkspaceSafetyTests(unittest.TestCase):
@@ -87,12 +92,29 @@ class WorkspaceSafetyTests(unittest.TestCase):
         self._git(repository, "config", "user.email", "proofix@example.test")
         self._git(repository, "config", "user.name", "ProofFix Tests")
         (repository / "tracked.txt").write_text("committed\n", encoding="utf-8")
-        (repository / ".env").write_text("API_KEY=secret\n", encoding="utf-8")
-        self._git(repository, "add", "tracked.txt", ".env")
+        tracked_secrets = {
+            ".env": "API_KEY=secret\n",
+            ".envrc": "export API_KEY=secret\n",
+            ".netrc": "machine example.test login user password secret\n",
+            ".npmrc": "//registry.example.test/:_authToken=secret\n",
+            ".pypirc": "[distutils]\npassword=secret\n",
+            ".docker/config.json": "{\"auths\":{}}\n",
+        }
+        for relative, content in tracked_secrets.items():
+            secret_path = repository / relative
+            secret_path.parent.mkdir(parents=True, exist_ok=True)
+            secret_path.write_text(content, encoding="utf-8")
+        self._git(repository, "add", "tracked.txt", *tracked_secrets)
         self._git(repository, "commit", "-qm", "initial")
         (repository / "tracked.txt").write_text("dirty\n", encoding="utf-8")
         (repository / "untracked.txt").write_text("untracked\n", encoding="utf-8")
         (repository / "local.pem").write_text("private\n", encoding="utf-8")
+        (repository / ".envrc").write_text("export UNTRACKED_SECRET=secret\n", encoding="utf-8")
+        (repository / ".netrc").write_text("machine untracked.test password secret\n", encoding="utf-8")
+        (repository / ".npmrc").write_text("//registry.example.test/:_authToken=secret\n", encoding="utf-8")
+        (repository / ".pypirc").write_text("password=secret\n", encoding="utf-8")
+        (repository / ".docker").mkdir(exist_ok=True)
+        (repository / ".docker" / "config.json").write_text("{\"auths\":{}}\n", encoding="utf-8")
         return repository
 
     def test_clean_snapshot_records_mode_and_commit_without_mutating_source(self):
@@ -106,13 +128,56 @@ class WorkspaceSafetyTests(unittest.TestCase):
             self.assertEqual(snapshot.snapshot_mode, "clean")
             self.assertEqual(snapshot.commit, expected_commit)
             self.assertEqual((snapshot.path / "tracked.txt").read_text(encoding="utf-8"), "committed\n")
-            self.assertFalse((snapshot.path / ".env").exists())
-            self.assertFalse((snapshot.path / "local.pem").exists())
+            for relative in (".env", ".envrc", ".netrc", ".npmrc", ".pypirc", ".docker/config.json", "local.pem"):
+                self.assertFalse((snapshot.path / relative).exists(), relative)
             after = {path.relative_to(repository): path.read_bytes() for path in repository.rglob("*") if path.is_file() and ".git" not in path.relative_to(repository).parts}
             self.assertEqual(before, after)
             manager.cleanup(snapshot)
             self.assertFalse(snapshot.path.exists())
             self.assertTrue((repository / "untracked.txt").exists())
+
+    def test_nested_repository_path_is_rejected_without_expanding_to_git_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = self._make_repository(root)
+            nested = repository / "nested"
+            nested.mkdir()
+            manager = WorkspaceManager(root / "run")
+            with self.assertRaises(ValueError):
+                manager.snapshot_repository(nested)
+            self.assertFalse((root / "run").exists())
+
+    def test_run_root_inside_source_is_rejected_without_source_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = self._make_repository(root)
+            run_root = repository / "proofix-run"
+            manager = WorkspaceManager(run_root)
+            with self.assertRaises(ValueError):
+                manager.snapshot_repository(repository)
+            self.assertFalse(run_root.exists())
+            self.assertFalse((repository / "workspaces").exists())
+
+    def test_cleanup_surfaces_failed_git_worktree_removal_and_preserves_registration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = self._make_repository(root)
+            manager = WorkspaceManager(root / "run")
+            snapshot = manager.snapshot_repository(repository)
+            original_git = manager._git
+            try:
+                def fail_remove(_repository, *args):
+                    raise subprocess.CalledProcessError(1, ["git", *args])
+                manager._git = fail_remove
+                with self.assertRaises(RuntimeError):
+                    manager.cleanup(snapshot)
+                self.assertTrue(snapshot.path.exists())
+                registrations = self._git(repository, "worktree", "list", "--porcelain")
+                self.assertIn(str(snapshot.path), registrations)
+            finally:
+                manager._git = original_git
+                manager.cleanup(snapshot)
+            self.assertFalse(snapshot.path.exists())
 
     def test_dirty_inclusion_is_explicit_and_cleanup_cannot_remove_outside_path(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -123,7 +188,8 @@ class WorkspaceSafetyTests(unittest.TestCase):
             self.assertEqual(snapshot.snapshot_mode, "include_dirty")
             self.assertEqual((snapshot.path / "tracked.txt").read_text(encoding="utf-8"), "dirty\n")
             self.assertTrue((snapshot.path / "untracked.txt").exists())
-            self.assertFalse((snapshot.path / ".env").exists())
+            for relative in (".env", ".envrc", ".netrc", ".npmrc", ".pypirc", ".docker/config.json", "local.pem"):
+                self.assertFalse((snapshot.path / relative).exists(), relative)
             with self.assertRaises(ValueError):
                 manager.cleanup(type(snapshot)(path=root / "outside", repository=repository, snapshot_mode="copy", commit=None, materialization="copy"))
             manager.cleanup(snapshot)
