@@ -12,8 +12,7 @@ _PRIVATE_KEY = re.compile(
 _BEARER = re.compile(r"(?i)(\bBearer\s+)([A-Za-z0-9._~+/=-]{6,})")
 _GITHUB_TOKEN = re.compile(r"(?i)\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_\-]{10,}")
 _SECRET_ASSIGNMENT = re.compile(
-    r"(?im)(?P<prefix>^[ \t]*(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_.-]*"
-    r"(?:password|passwd|pwd|api[_-]?key|api[_-]?token|access[_-]?token|secret|credential|private[_-]?key|auth[_-]?token|github[_-]?token)"
+    r"(?im)(?P<prefix>^[ \t]*(?:export[ \t]+)?(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)"
     r"[ \t]*(?:=|:)[ \t]*)(?P<quote>[\"']?)(?P<value>[^\"'\r\n#]*?)(?P=quote)(?P<tail>[ \t]*(?:#.*)?$)"
 )
 _URL_CREDENTIAL = re.compile(r"(?i)(://[^\s:/]+:)([^@\s/]+)(@)")
@@ -62,7 +61,7 @@ def redact_text(text: str) -> tuple[str, list[str]]:
     result = _GITHUB_TOKEN.sub(github_replacement, result)
 
     def assignment_replacement(match: re.Match[str]) -> str:
-        if not match.group("value"):
+        if not match.group("value") or not _SENSITIVE_NAME.search(match.group("name")):
             return match.group(0)
         mark("credential_assignment")
         return f"{match.group('prefix')}{match.group('quote')}[REDACTED]{match.group('quote')}{match.group('tail')}"

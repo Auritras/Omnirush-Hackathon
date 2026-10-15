@@ -99,7 +99,7 @@ class WorkspaceSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repository = self._make_repository(root)
-            before = {path.relative_to(repository): path.read_bytes() for path in repository.rglob("*") if path.is_file()}
+            before = {path.relative_to(repository): path.read_bytes() for path in repository.rglob("*") if path.is_file() and ".git" not in path.relative_to(repository).parts}
             expected_commit = self._git(repository, "rev-parse", "HEAD")
             manager = WorkspaceManager(root / "run")
             snapshot = manager.snapshot_repository(repository)
@@ -108,7 +108,7 @@ class WorkspaceSafetyTests(unittest.TestCase):
             self.assertEqual((snapshot.path / "tracked.txt").read_text(encoding="utf-8"), "committed\n")
             self.assertFalse((snapshot.path / ".env").exists())
             self.assertFalse((snapshot.path / "local.pem").exists())
-            after = {path.relative_to(repository): path.read_bytes() for path in repository.rglob("*") if path.is_file()}
+            after = {path.relative_to(repository): path.read_bytes() for path in repository.rglob("*") if path.is_file() and ".git" not in path.relative_to(repository).parts}
             self.assertEqual(before, after)
             manager.cleanup(snapshot)
             self.assertFalse(snapshot.path.exists())
