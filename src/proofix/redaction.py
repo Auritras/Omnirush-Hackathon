@@ -17,7 +17,7 @@ _SECRET_ASSIGNMENT = re.compile(
 )
 _URL_CREDENTIAL = re.compile(r"(?i)(://[^\s:/]+:)([^@\s/]+)(@)")
 _SENSITIVE_NAME = re.compile(
-    r"(?i)(?:password|passwd|pwd|secret|token|api[_-]?key|api[_-]?token|access[_-]?(?:key|token)|client[_-]?secret|application[_-]?credentials?|service[_-]?account|private[_-]?key|credential|auth)"
+    r"(?i)(?:password|passwd|pwd|secret|token|api[_-]?key|api[_-]?token|access[_-]?(?:key|token)|client[_-]?secret|application[_-]?credentials?|(?:credential|credentials)[_-]?file|keyfile|service[_-]?account|private[_-]?key|credential|auth)"
 )
 
 

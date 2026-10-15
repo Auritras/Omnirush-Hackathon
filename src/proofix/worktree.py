@@ -34,7 +34,7 @@ def _is_secret_name(name: str) -> bool:
         return True
     if lowered.endswith(tuple(_SECRET_SUFFIXES)):
         return True
-    if lowered.startswith("id_rsa") or lowered.startswith("id_ed25519"):
+    if any(lowered.startswith(prefix) for prefix in ("id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", "id_xmss")):
         return True
     return False
 
