@@ -68,6 +68,7 @@ class RedactionTests(unittest.TestCase):
                 "AWS_ACCESS_KEY_ID": "AKIAIOSFODNN7EXAMPLE",
                 "AZURE_CLIENT_SECRET": "azure-client-secret",
                 "GOOGLE_APPLICATION_CREDENTIALS": "/secrets/service-account.json",
+                "GOOGLE_CLOUD_KEYFILE_JSON": '{"private_key":"-----BEGIN PRIVATE KEY-----\nembedded-secret\n-----END PRIVATE KEY-----"}',
                 "DOCKER_AUTH_CONFIG": "{\"auths\":{}}",
                 "CI": "true",
                 "BUILD_NUMBER": "42",
@@ -77,7 +78,7 @@ class RedactionTests(unittest.TestCase):
         self.assertEqual(redacted["BUILD_NUMBER"], "42")
         self.assertNotIn("do-not-export", redacted.values())
         self.assertNotIn("ghp_1234567890abcdefghijklmnopqrstuvwxyz", redacted.values())
-        for name in ("API_KEY", "GITHUB_TOKEN", "AWS_ACCESS_KEY_ID", "AZURE_CLIENT_SECRET", "GOOGLE_APPLICATION_CREDENTIALS", "DOCKER_AUTH_CONFIG"):
+        for name in ("API_KEY", "GITHUB_TOKEN", "AWS_ACCESS_KEY_ID", "AZURE_CLIENT_SECRET", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_KEYFILE_JSON", "DOCKER_AUTH_CONFIG"):
             self.assertEqual(redacted[name], "[REDACTED]")
 
 
@@ -98,6 +99,8 @@ class WorkspaceSafetyTests(unittest.TestCase):
             ".netrc": "machine example.test login user password secret\n",
             ".npmrc": "//registry.example.test/:_authToken=secret\n",
             ".pypirc": "[distutils]\npassword=secret\n",
+            "id_ecdsa": "ecdsa-private-key\n",
+            "id_dsa": "dsa-private-key\n",
             ".docker/config.json": "{\"auths\":{}}\n",
         }
         for relative, content in tracked_secrets.items():
@@ -113,6 +116,7 @@ class WorkspaceSafetyTests(unittest.TestCase):
         (repository / ".netrc").write_text("machine untracked.test password secret\n", encoding="utf-8")
         (repository / ".npmrc").write_text("//registry.example.test/:_authToken=secret\n", encoding="utf-8")
         (repository / ".pypirc").write_text("password=secret\n", encoding="utf-8")
+        (repository / "id_xmss").write_text("xmss-private-key\n", encoding="utf-8")
         (repository / ".docker").mkdir(exist_ok=True)
         (repository / ".docker" / "config.json").write_text("{\"auths\":{}}\n", encoding="utf-8")
         return repository
@@ -128,7 +132,7 @@ class WorkspaceSafetyTests(unittest.TestCase):
             self.assertEqual(snapshot.snapshot_mode, "clean")
             self.assertEqual(snapshot.commit, expected_commit)
             self.assertEqual((snapshot.path / "tracked.txt").read_text(encoding="utf-8"), "committed\n")
-            for relative in (".env", ".envrc", ".netrc", ".npmrc", ".pypirc", ".docker/config.json", "local.pem"):
+            for relative in (".env", ".envrc", ".netrc", ".npmrc", ".pypirc", "id_ecdsa", "id_dsa", "id_xmss", ".docker/config.json", "local.pem"):
                 self.assertFalse((snapshot.path / relative).exists(), relative)
             after = {path.relative_to(repository): path.read_bytes() for path in repository.rglob("*") if path.is_file() and ".git" not in path.relative_to(repository).parts}
             self.assertEqual(before, after)
@@ -188,7 +192,7 @@ class WorkspaceSafetyTests(unittest.TestCase):
             self.assertEqual(snapshot.snapshot_mode, "include_dirty")
             self.assertEqual((snapshot.path / "tracked.txt").read_text(encoding="utf-8"), "dirty\n")
             self.assertTrue((snapshot.path / "untracked.txt").exists())
-            for relative in (".env", ".envrc", ".netrc", ".npmrc", ".pypirc", ".docker/config.json", "local.pem"):
+            for relative in (".env", ".envrc", ".netrc", ".npmrc", ".pypirc", "id_ecdsa", "id_dsa", "id_xmss", ".docker/config.json", "local.pem"):
                 self.assertFalse((snapshot.path / relative).exists(), relative)
             with self.assertRaises(ValueError):
                 manager.cleanup(type(snapshot)(path=root / "outside", repository=repository, snapshot_mode="copy", commit=None, materialization="copy"))
