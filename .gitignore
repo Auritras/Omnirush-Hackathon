@@ -1,0 +1,6 @@
+.worktrees/
+.superpowers/
+.proofix-data/
+__pycache__/
+*.py[cod]
+.opencode/omnirush/inbox/
