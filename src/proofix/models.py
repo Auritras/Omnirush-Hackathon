@@ -49,20 +49,25 @@ def utc_timestamp() -> str:
 
 
 def _validate_timestamp(value: Any) -> str:
-    if not isinstance(value, str) or not value.endswith("Z"):
-        raise ValidationError("timestamps must be UTC ISO-8601 strings ending in Z")
+    if not isinstance(value, str):
+        raise ValidationError("timestamps must be UTC ISO-8601 strings")
     try:
-        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+        parsed = _parse_timestamp(value)
     except ValueError as exc:
         raise ValidationError("invalid UTC timestamp") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
-        raise ValidationError("timestamps must use UTC")
+    if parsed.tzinfo is None:
+        raise ValidationError("timestamps must include a UTC offset")
     return value
+
+
+def _parse_timestamp(value: str) -> datetime:
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    return datetime.fromisoformat(normalized)
 
 
 def _validate_json(value: Any, *, field_name: str = "value") -> Any:
     try:
-        json.dumps(_json_compatible(value), sort_keys=True, separators=(",", ":"))
+        json.dumps(_json_compatible(value), sort_keys=True, separators=(",", ":"), allow_nan=False)
     except (TypeError, ValueError) as exc:
         raise ValidationError(f"{field_name} must be JSON-compatible") from exc
     return value
@@ -77,7 +82,14 @@ def _opaque_id(value: Any, prefix: str) -> str:
 
 
 def _artifact_ref(value: Any) -> str:
-    if not isinstance(value, str) or not value or value.startswith("/"):
+    if (
+        not isinstance(value, str)
+        or not value
+        or value.startswith("/")
+        or value.startswith("\\")
+        or (len(value) >= 3 and value[1] == ":" and value[0].isalpha() and value[2] in ("/", "\\"))
+        or "\\" in value
+    ):
         raise ValidationError("artifact references must be relative paths")
     path = PurePosixPath(value)
     if ".." in path.parts:
@@ -94,13 +106,13 @@ class JsonRecord:
         return result
 
     def to_json(self) -> str:
-        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"), allow_nan=False)
 
     @classmethod
     def from_json(cls, value: str) -> "JsonRecord":
         try:
-            decoded = json.loads(value)
-        except (TypeError, json.JSONDecodeError) as exc:
+            decoded = json.loads(value, parse_constant=_reject_non_finite)
+        except (TypeError, ValueError) as exc:
             raise ValidationError("record JSON is malformed") from exc
         decoder = getattr(cls, "from_dict", None)
         if decoder is None:
@@ -125,7 +137,7 @@ class EvidenceRecord(JsonRecord):
             raise ValidationError("evidence summary must be text")
         if self.artifact_ref is not None:
             self.artifact_ref = _artifact_ref(self.artifact_ref)
-        _validate_json(self.details, field_name="evidence details")
+        _validate_details(self.details, field_name="evidence details")
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "EvidenceRecord":
@@ -156,7 +168,7 @@ class CheckResult(JsonRecord):
             value = getattr(self, name)
             if value is not None:
                 setattr(self, name, _artifact_ref(value))
-        _validate_json(self.details, field_name="check details")
+        _validate_details(self.details, field_name="check details")
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "CheckResult":
@@ -224,7 +236,11 @@ class EventRecord(JsonRecord):
             value = getattr(self, name)
             if value is not None:
                 setattr(self, name, _artifact_ref(value))
-        _validate_json(self.details, field_name="event details")
+        _validate_details(self.details, field_name="event details")
+        for name in ("state_before", "state_after"):
+            state = getattr(self, name)
+            if state is not None and state not in KNOWN_STATES:
+                raise ValidationError(f"unknown {name}: {state}")
 
     @staticmethod
     def now_timestamp() -> str:
@@ -328,6 +344,32 @@ def _json_compatible(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_compatible(item) for item in value]
     return value
+
+
+def _reject_non_finite(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is not allowed: {value}")
+
+
+def _validate_details(value: Any, *, field_name: str) -> None:
+    _validate_json(value, field_name=field_name)
+    encoded = json.dumps(_json_compatible(value), sort_keys=True, separators=(",", ":"), allow_nan=False)
+    if len(encoded) > MAX_INLINE_FIELD * 4:
+        raise ValidationError(f"{field_name} is too large; store content as artifact references")
+    _walk_detail_values(value, field_name)
+
+
+def _walk_detail_values(value: Any, field_name: str) -> None:
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            key_text = str(key).lower()
+            if key_text.endswith("_ref") and isinstance(nested, str):
+                _artifact_ref(nested)
+            if isinstance(nested, str) and len(nested) > MAX_INLINE_FIELD and not key_text.endswith("_ref"):
+                raise ValidationError(f"{field_name}.{key} is too large; store content as an artifact reference")
+            _walk_detail_values(nested, f"{field_name}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, nested in enumerate(value):
+            _walk_detail_values(nested, f"{field_name}[{index}]")
 
 
 def _validate_bounded(value: str | None, field_name: str) -> None:

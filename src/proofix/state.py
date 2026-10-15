@@ -40,8 +40,11 @@ def transition(run: RunRecord, target: str, *, event_kind: str, details: Mapping
         raise DomainError("transition details must be a mapping")
     if not event_kind or not isinstance(event_kind, str):
         raise DomainError("transition event kind is required")
-    if "agent" in event_kind.lower():
-        raise DomainError("agents cannot own run state transitions")
+    owner = event_kind.lower()
+    if "agent" in owner or "browser" in owner:
+        raise DomainError("agents and browsers cannot own run state transitions")
+    if not (owner.startswith("orchestrator:") or owner.startswith("orchestrator_") or owner.startswith("orchestrator.")):
+        raise DomainError("only orchestrator-owned events may change run state")
     forbidden = {"state", "status", "target_state", "next_state", "state_after"}
     if forbidden.intersection(details):
         raise DomainError("agent-supplied status changes are not accepted")

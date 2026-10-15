@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 from typing import Any, Mapping
 
-from .models import DomainError, EventRecord, RunRecord, ValidationError
+from .models import DomainError, EventRecord, RunRecord, ValidationError, _parse_timestamp
 from .state import transition
 
 
@@ -25,7 +25,7 @@ class RunStore:
         if not isinstance(intake, Mapping):
             raise DomainError("intake must be a JSON object")
         try:
-            json.dumps(intake, sort_keys=True, separators=(",", ":"))
+            json.dumps(intake, sort_keys=True, separators=(",", ":"), allow_nan=False)
         except (TypeError, ValueError) as exc:
             raise DomainError("intake must be JSON-compatible") from exc
         run = RunRecord.new(intake)
@@ -38,7 +38,7 @@ class RunStore:
     def get_run(self, run_id: str) -> RunRecord:
         snapshot = self._snapshot_path(run_id)
         try:
-            data = json.loads(snapshot.read_text(encoding="utf-8"))
+            data = _strict_json_loads(snapshot.read_text(encoding="utf-8"))
             return RunRecord.from_dict(data)
         except FileNotFoundError as exc:
             raise DomainError(f"unknown run: {run_id}") from exc
@@ -56,9 +56,11 @@ class RunStore:
             raise DomainError(f"duplicate event ID: {event.event_id}")
         if events and self._event_key(event.event_id) <= self._event_key(events[-1].event_id):
             raise DomainError("event IDs must be appended in order")
+        if event.state_before is not None and event.state_before != run.state:
+            raise DomainError("event state_before does not match the run snapshot")
+        if events and _parse_timestamp(event.timestamp) < _parse_timestamp(events[-1].timestamp):
+            raise DomainError("event timestamps must be appended in UTC order")
         if event.state_after is not None:
-            if event.state_before is not None and event.state_before != run.state:
-                raise DomainError("event state_before does not match the run snapshot")
             try:
                 updated = transition(run, event.state_after, event_kind=event.kind, details=event.details)
             except DomainError:
@@ -90,14 +92,14 @@ class RunStore:
             if not line.strip():
                 raise DomainError(f"blank event record at line {line_number}")
             try:
-                event = EventRecord.from_dict(json.loads(line))
+                event = EventRecord.from_dict(_strict_json_loads(line))
             except (json.JSONDecodeError, TypeError, ValidationError, ValueError) as exc:
                 raise DomainError(f"malformed event record at line {line_number}") from exc
             if event.run_id != run_id:
                 raise DomainError(f"event run ID mismatch at line {line_number}")
             if result and self._event_key(event.event_id) <= self._event_key(result[-1].event_id):
                 raise DomainError(f"event ordering error at line {line_number}")
-            if result and event.timestamp < result[-1].timestamp:
+            if result and _parse_timestamp(event.timestamp) < _parse_timestamp(result[-1].timestamp):
                 raise DomainError(f"event timestamp ordering error at line {line_number}")
             result.append(event)
         return result
@@ -106,6 +108,8 @@ class RunStore:
         snapshot = self.get_run(run_id)
         replayed = replace(snapshot, state="created", updated_at=snapshot.created_at)
         for event in self.list_events(run_id):
+            if event.state_before is not None and event.state_before != replayed.state:
+                raise DomainError("event state_before does not match replay state")
             if event.state_after is not None:
                 replayed = transition(replayed, event.state_after, event_kind=event.kind, details=event.details)
                 replayed = replace(replayed, updated_at=event.timestamp)
@@ -139,3 +143,10 @@ class RunStore:
         if match:
             return (0, int(match.group(1)))
         return (1, event_id)
+
+
+def _strict_json_loads(value: str) -> Any:
+    def reject_non_finite(constant: str) -> None:
+        raise ValueError(f"non-finite JSON constant is not allowed: {constant}")
+
+    return json.loads(value, parse_constant=reject_non_finite)
