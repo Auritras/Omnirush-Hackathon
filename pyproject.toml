@@ -1,0 +1,10 @@
+[project]
+name = "proofix"
+version = "0.1.0"
+description = "Local-first, evidence-backed failure investigation"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.proofix]
+runtime = "python3.12"
+standard_library_only = true
