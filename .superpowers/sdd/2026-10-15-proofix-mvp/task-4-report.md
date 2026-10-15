@@ -91,3 +91,32 @@ Complete.
 
 - Process-group termination and `/proc` child-liveness assertions are Linux-oriented; the runner retains its direct-process fallback where process groups are unavailable.
 - The runner keeps the existing explicit 1 MiB-per-stream capture cap and marks output beyond the cap as truncated.
+
+## Fix round 3
+
+### Status
+
+Complete.
+
+### Commit
+
+`1b7878a` — `fix: scope command evaluation policy`
+
+### Changes
+
+- Scoped command-string rejection to shell/interpreter basenames, versioned interpreter patterns, and explicit `CommandPolicy.interpreter_commands`/`shell_commands` metadata instead of rejecting `-c`/`-e` for every tool.
+- Added an ordinary-tool regression proving `echo -e hello` remains allowed.
+- Strengthened the versioned/custom interpreter regression with marker-creating payloads and explicit custom interpreter metadata.
+- Scoped `/proc` child-liveness assertions to Linux, added a portable POSIX fallback for PID checks, and made non-POSIX process termination explicitly direct-process behavior.
+
+### Exact checks and results
+
+- `PYTHONPATH=src python -m unittest tests.test_runner tests.test_reproduction -v`: passed; 19 focused tests ran successfully.
+- `make test`: passed; 42 tests ran successfully.
+- `PYTHONPATH=src python -m compileall -q src tests`: passed.
+- `git diff --check`: passed before the fix commit.
+
+### Concerns
+
+- Linux process-group cleanup and `/proc` liveness assertions are covered on Linux; non-POSIX platforms use direct-parent termination and do not claim descendant cleanup.
+- The runner keeps the existing explicit 1 MiB-per-stream capture cap and marks output beyond the cap as truncated.
