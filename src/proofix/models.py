@@ -49,14 +49,14 @@ def utc_timestamp() -> str:
 
 
 def _validate_timestamp(value: Any) -> str:
-    if not isinstance(value, str):
-        raise ValidationError("timestamps must be UTC ISO-8601 strings")
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ValidationError("timestamps must be UTC ISO-8601 strings ending in Z")
     try:
         parsed = _parse_timestamp(value)
     except ValueError as exc:
         raise ValidationError("invalid UTC timestamp") from exc
-    if parsed.tzinfo is None:
-        raise ValidationError("timestamps must include a UTC offset")
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise ValidationError("timestamps must use UTC")
     return value
 
 
@@ -359,7 +359,10 @@ def _validate_details(value: Any, *, field_name: str) -> None:
 
 
 def _walk_detail_values(value: Any, field_name: str) -> None:
-    if isinstance(value, Mapping):
+    if isinstance(value, str):
+        if len(value) > MAX_INLINE_FIELD:
+            raise ValidationError(f"{field_name} is too large; store content as an artifact reference")
+    elif isinstance(value, Mapping):
         for key, nested in value.items():
             key_text = str(key).lower()
             if key_text.endswith("_ref") and isinstance(nested, str):

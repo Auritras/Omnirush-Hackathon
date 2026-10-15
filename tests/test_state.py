@@ -113,6 +113,12 @@ class StateTransitionTests(unittest.TestCase):
                 "orchestrator:command_result",
                 details={"result": {"stdout": "x" * 5000}},
             )
+        with self.assertRaises(DomainError):
+            EventRecord.new(
+                "run-test",
+                "orchestrator:command_result",
+                details={"lines": ["x" * 5000]},
+            )
         event = EventRecord.new(
             "run-test",
             "orchestrator:command_result",
@@ -138,6 +144,15 @@ class StateTransitionTests(unittest.TestCase):
     def test_artifact_references_reject_windows_absolute_paths(self):
         with self.assertRaises(DomainError):
             EventRecord.new("run-test", "orchestrator:result", stdout_ref="C:\\secret\\output.log")
+
+    def test_timestamps_must_use_canonical_utc_z_representation(self):
+        with self.assertRaises(DomainError):
+            EventRecord(
+                event_id="evt-offset",
+                run_id="run-test",
+                timestamp="2026-01-01T00:00:00+01:00",
+                kind="orchestrator:result",
+            )
 
 
 class StorePersistenceTests(unittest.TestCase):
@@ -229,7 +244,7 @@ class StorePersistenceTests(unittest.TestCase):
                 EventRecord(
                     event_id="evt-0001",
                     run_id=run.run_id,
-                    timestamp="2026-01-01T01:30:00+01:00",
+                    timestamp="2026-01-01T00:30:00Z",
                     kind="orchestrator:triage_started",
                 )
             )
