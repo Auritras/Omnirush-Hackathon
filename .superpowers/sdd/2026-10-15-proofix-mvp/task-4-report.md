@@ -61,3 +61,33 @@ Complete.
 - Captured output is explicitly capped at 1 MiB per stream by default; output beyond that cap is marked truncated and cannot participate in reproduction comparison.
 - The focused command requires `PYTHONPATH=src` in this src-layout repository; `make test` supplies it automatically.
 - Runtime availability remains dependent on the allowlisted executable being installed locally; unavailable runtimes remain `blocked`.
+
+## Fix round 2
+
+### Status
+
+Complete.
+
+### Commit
+
+`80500bf` — `fix: enforce bounded process-group termination`
+
+### Changes
+
+- Rejected bundled command-string flags for any allowlisted executable, covering versioned and custom interpreter names such as `python3.11 -cpass` and `custom-python -cpass`.
+- Made timeout escalation unconditional after the monotonic SIGTERM grace deadline, including when the parent exits while a child ignores SIGTERM.
+- Kept timeout enforcement active after stdout/stderr close and replaced the unbounded process wait with bounded reaping and pipe cleanup.
+- Added regressions asserting versioned/custom eval rejection, SIGTERM-ignoring child termination, closed-pipe timeout behavior, bounded return time, and child-process absence.
+
+### Exact checks and results
+
+- Test-first red phase: `PYTHONPATH=src python -m unittest tests.test_runner.RunnerTests.test_versioned_and_custom_allowlisted_interpreters_reject_bundled_eval_flags -v` failed with 2 failures before the implementation fix.
+- `PYTHONPATH=src python -m unittest tests.test_runner tests.test_reproduction -v`: passed; 18 focused tests ran successfully.
+- `make test`: passed; 41 tests ran successfully.
+- `PYTHONPATH=src python -m compileall -q src tests`: passed.
+- `git diff --check`: passed before the fix commit.
+
+### Concerns
+
+- Process-group termination and `/proc` child-liveness assertions are Linux-oriented; the runner retains its direct-process fallback where process groups are unavailable.
+- The runner keeps the existing explicit 1 MiB-per-stream capture cap and marks output beyond the cap as truncated.
