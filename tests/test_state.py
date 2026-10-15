@@ -126,7 +126,7 @@ class StorePersistenceTests(unittest.TestCase):
             )
             self.assertIsNone(event.stdout)
             self.assertEqual(event.stdout_ref, "artifacts/evt.stdout")
-            self.assertLessEqual(len(event.to_dict().get("stdout", "")), 4096)
+            self.assertIsNone(event.to_dict().get("stdout"))
 
     def test_mismatched_ids_duplicate_or_out_of_order_and_malformed_records_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
