@@ -22,6 +22,11 @@ from .redaction import redact_environment, redact_text
 
 _SHELL_OPERATORS = set(";&|><`$(){}\n\r")
 _WINDOWS_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+_SHELL_BASENAME = re.compile(r"(?:^|[-_.])(?:ba|da|z|k|c|tc)?sh(?:[-_.]?\d+(?:\.\d+)*)?$|(?:^|[-_.])fish(?:[-_.]?\d+(?:\.\d+)*)?$", re.IGNORECASE)
+_INTERPRETER_BASENAME = re.compile(
+    r"(?:^|[-_.])(?:python|pypy|node|nodejs|ruby|perl|php|lua|deno)(?:[-_.]?\d+(?:\.\d+)*)?$",
+    re.IGNORECASE,
+)
 _DEFAULT_COMMANDS = frozenset(
     {
         "bash",
@@ -55,6 +60,8 @@ class CommandPolicy:
     """
 
     allowed_commands: frozenset[str] | set[str] | tuple[str, ...] = field(default_factory=lambda: _DEFAULT_COMMANDS)
+    interpreter_commands: frozenset[str] | set[str] | tuple[str, ...] = ()
+    shell_commands: frozenset[str] | set[str] | tuple[str, ...] = ()
     timeout_seconds: float = 30.0
     max_inline_output: int = 4096
     max_output_bytes: int = 1_048_576
@@ -74,6 +81,8 @@ class CommandPolicy:
         if self.max_output_bytes <= 0:
             raise ValueError("max_output_bytes must be positive")
         object.__setattr__(self, "allowed_commands", commands)
+        object.__setattr__(self, "interpreter_commands", frozenset(str(item).casefold() for item in self.interpreter_commands))
+        object.__setattr__(self, "shell_commands", frozenset(str(item).casefold() for item in self.shell_commands))
         object.__setattr__(self, "required_inputs", tuple(str(item) for item in self.required_inputs))
         if self.environment_allowlist is not None:
             object.__setattr__(self, "environment_allowlist", frozenset(str(item) for item in self.environment_allowlist))
@@ -199,7 +208,7 @@ def run_command(
         return _blocked(argv, workspace, "command is not allowlisted", metadata, started, policy)
     try:
         executable_path = _resolve_executable(executable, executable_name, workspace, root)
-        _reject_command_string_forms(executable_name, argv[1:])
+        _reject_command_string_forms(executable_name, argv[1:], policy)
         _validate_argument_paths(argv[1:], workspace, root)
         _validate_required_inputs(workspace, root, policy.required_inputs)
         child_environment = _child_environment(environment, policy)
@@ -227,7 +236,7 @@ def run_command(
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            start_new_session=True,
+            start_new_session=os.name == "posix",
         )
         stdout_raw, stderr_raw, stdout_truncated, stderr_truncated, timed_out = _capture_process(
             process, timeout_seconds=policy.timeout_seconds, max_output_bytes=policy.max_output_bytes
@@ -311,16 +320,22 @@ def _reject_unquoted_shell_operators(command: str) -> None:
             raise ValueError("shell metacharacters are not allowed")
 
 
-def _reject_command_string_forms(executable: str, arguments: Sequence[str]) -> None:
-    """Reject source/shell-string flags, including bundled and custom names."""
-    del executable
-    flags = {"-c", "--command", "--eval", "-e", "--execute", "--print"}
+def _reject_command_string_forms(executable: str, arguments: Sequence[str], policy: CommandPolicy) -> None:
+    """Reject source/shell-string flags for classified interpreters and shells."""
+    name = executable.casefold()
+    is_shell = name in policy.shell_commands or bool(_SHELL_BASENAME.search(name))
+    is_interpreter = name in policy.interpreter_commands or bool(_INTERPRETER_BASENAME.search(name))
+    if not (is_shell or is_interpreter):
+        return
+    flags = {"-c", "--command"}
+    if is_interpreter:
+        flags.update({"--eval", "-e", "--execute", "--print"})
     for argument in arguments:
         if argument in flags:
             raise ValueError("command-string execution is not allowed")
         if argument == "-":
             raise ValueError("stdin command execution is not allowed")
-        if argument.startswith(("-c", "-e", "--eval=", "--command=", "--execute=", "--print=")):
+        if argument.startswith(("-c", "--command=")) or (is_interpreter and argument.startswith(("-e", "--eval=", "--execute=", "--print="))):
             raise ValueError("command-string execution is not allowed")
 
 
@@ -554,6 +569,19 @@ def _reap_process_bounded(process: subprocess.Popen[bytes], timeout: float = 0.5
 
 
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+    if os.name != "posix":
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            return
+        grace_deadline = time.monotonic() + 0.5
+        while time.monotonic() < grace_deadline:
+            time.sleep(0.01)
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        return
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except (AttributeError, ProcessLookupError, PermissionError):

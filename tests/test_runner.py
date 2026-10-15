@@ -30,9 +30,14 @@ def _assert_pid_gone(test_case: unittest.TestCase, pid_file: Path) -> None:
             return
         except PermissionError:
             return
-        proc_stat = Path(f"/proc/{pid}/stat")
-        if proc_stat.exists() and len(proc_stat.read_text(encoding="utf-8").split()) > 2 and proc_stat.read_text(encoding="utf-8").split()[2] == "Z":
-            return
+        if sys.platform.startswith("linux"):
+            proc_stat = Path(f"/proc/{pid}/stat")
+            try:
+                state = proc_stat.read_text(encoding="utf-8").split()[2]
+            except (FileNotFoundError, IndexError):
+                return
+            if state == "Z":
+                return
         time.sleep(0.02)
     test_case.fail(f"child process {pid} remained alive after timeout")
 
@@ -77,21 +82,38 @@ class RunnerTests(unittest.TestCase):
             workspace = Path(directory)
             marker = workspace / "marker"
             versioned = "python3.11"
-            policy = CommandPolicy(allowed_commands={versioned, "custom-python"})
+            policy = CommandPolicy(
+                allowed_commands={versioned, "custom-runner"},
+                interpreter_commands={"custom-runner"},
+            )
             commands = (
+                [f"./{versioned}", "-c", f"open({str(marker)!r}, 'w').write('versioned')"],
                 [f"./{versioned}", "-cpass"],
-                [f"./{versioned}", "-eprint(1)"],
             )
             shutil.copy2(sys.executable, workspace / versioned)
-            shutil.copy2(sys.executable, workspace / "custom-python")
+            shutil.copy2(sys.executable, workspace / "custom-runner")
             (workspace / versioned).chmod(0o755)
-            (workspace / "custom-python").chmod(0o755)
-            commands += (("./custom-python", "-cpass"),)
+            (workspace / "custom-runner").chmod(0o755)
+            commands += (
+                ("./custom-runner", "-e", f"open({str(marker)!r}, 'w').write('custom')"),
+                ("./custom-runner", "-cpass"),
+            )
             for command in commands:
                 with self.subTest(command=command):
                     result = run_command(command, workspace, policy=policy)
                     self.assertTrue(result.blocked)
             self.assertFalse(marker.exists())
+
+    def test_ordinary_allowlisted_tool_keeps_legitimate_e_flag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            result = run_command(
+                ["echo", "-e", "hello"],
+                workspace,
+                policy=CommandPolicy(allowed_commands={"echo"}),
+            )
+            self.assertFalse(result.blocked)
+            self.assertEqual(result.stdout, "hello\n")
 
     def test_absolute_paths_cwd_escapes_and_disallowed_commands_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -108,6 +130,7 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue(run_command(["python", script], outside, policy=policy).blocked)
             outside.rmdir()
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "child process liveness assertion requires Linux")
     def test_timeout_terminates_child_process_and_bounds_capture(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
@@ -141,6 +164,7 @@ class RunnerTests(unittest.TestCase):
             self.assertFalse(survived.exists(), "child process continued after timeout")
             _assert_pid_gone(self, pid_file)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "child process liveness assertion requires Linux")
     def test_timeout_escalates_after_parent_exits_and_child_ignores_sigterm(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
@@ -169,6 +193,7 @@ class RunnerTests(unittest.TestCase):
             self.assertFalse(survived.exists(), "SIGTERM-ignoring child survived escalation")
             _assert_pid_gone(self, pid_file)
 
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-only")
     def test_closed_pipes_do_not_bypass_timeout(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
