@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: test run demo export
+.PHONY: test run demo fixture-reset export
 
 DATA_ROOT ?= .proofix
 HOST ?= 127.0.0.1
@@ -16,6 +16,9 @@ run:
 
 demo:
 	PYTHONPATH=src $(PYTHON) -m proofix.cli demo --data-root "$(DATA_ROOT)" --host "$(HOST)" --port "$(PORT)"
+
+fixture-reset:
+	sh fixtures/broken-parser-repo/reset.sh
 
 export:
 	@test -n "$(RUN_ID)" || (printf '%s\n' 'RUN_ID is required' >&2; exit 2)

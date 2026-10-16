@@ -37,7 +37,7 @@ make test
 This invokes `unittest discover` with `PYTHONPATH=src` and requires no network
 access or globally installed package.
 
-## Run and demo
+## Offline demo and dashboard
 
 The local server entry point is started with:
 
@@ -55,6 +55,41 @@ branch/commit metadata, and session configuration:
 make demo
 ```
 
+To restore the intentionally failing fixture after an experiment, run:
+
+```sh
+make fixture-reset
+```
+
+Then open `http://127.0.0.1:8000/` in a browser. Select the supplied
+`broken-parser-repo` fixture in the dashboard, start the recorded run, run the
+failing command, and observe the reproduction evidence. Review the root-cause
+patch, explicitly approve it with the displayed digest, observe verification,
+and export both Markdown and JSON reports from the dashboard. The server runs
+the command and verification in disposable workspaces; the source working tree
+must remain unchanged.
+
+For the complete reproduction path, the fixture needs to be a standalone Git
+worktree. The checked-in fixture is intentionally kept inside this project
+checkout, so make a disposable copy before starting the server:
+
+```sh
+DEMO_FIXTURE=$(mktemp -d)
+cp -R fixtures/broken-parser-repo/. "$DEMO_FIXTURE"/
+git -C "$DEMO_FIXTURE" init -q
+git -C "$DEMO_FIXTURE" config user.email proofix-demo@example.test
+git -C "$DEMO_FIXTURE" config user.name "ProofFix Demo"
+git -C "$DEMO_FIXTURE" add .
+git -C "$DEMO_FIXTURE" commit -qm "fixture baseline"
+PYTHONPATH=src python -m proofix.cli run \
+  --repository "$DEMO_FIXTURE" \
+  --recorded-fixture fixtures/omnirush/reproducible-run.json \
+  --data-root .proofix-data
+```
+
+Use the dashboard/API flow above against this server, then remove the
+temporary directory after exporting the reports.
+
 Both commands run through the source checkout (`PYTHONPATH=src`) rather than
 requiring a global ProofFix installation. The server binds to localhost by
 default; it is not an internet-facing deployment.
@@ -70,6 +105,22 @@ The equivalent Make target is `make export RUN_ID=run-... OUTPUT=exports/report.
 FORMAT=markdown`. The HTTP API exposes JSON snapshots and events under
 `/api/runs/RUN_ID`, artifact reads under `/api/runs/RUN_ID/artifacts/REF`, and
 Markdown/JSON reports under `/api/runs/RUN_ID/report?format=markdown|json`.
+
+## Optional GitHub reads
+
+GitHub import is read-first and optional. Install and authenticate the GitHub
+CLI only when a user explicitly requests repository metadata, issue text, a
+pull-request diff, Actions status, or Actions logs:
+
+```sh
+gh auth login
+```
+
+Missing `gh`, authentication, or network access is reported as a blocked read
+with next steps. GitHub tokens are never passed in command arguments or stored
+in ProofFix records. Branch creation, commits, PR creation, and other GitHub
+writes are approval-gated stretch functionality and are not needed for the
+offline demo.
 
 ## Docker
 
@@ -94,4 +145,6 @@ into a hosted or production deployment.
 The MVP is intentionally a local development tool. It stores run data under
 the configured local data root, has no hosted control plane or multi-user
 authentication, and must not be exposed publicly. Production deployment,
-automatic merging, and unattended GitHub writes are outside the MVP scope.
+automatic merging, unattended GitHub writes, and PR creation without an
+explicit approval are outside the MVP scope. A clean-checkout demo is the
+supported deployment verification; the app has no hosted control plane.

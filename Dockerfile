@@ -1,7 +1,8 @@
 FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src
 
 RUN apt-get update \
     && apt-get install --no-install-recommends --yes git make \
@@ -10,6 +11,6 @@ RUN apt-get update \
 WORKDIR /app
 COPY . .
 
-RUN make test
+RUN python --version && make test
 
 CMD ["make", "run"]
