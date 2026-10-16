@@ -120,3 +120,33 @@ Complete.
 
 - Linux process-group cleanup and `/proc` liveness assertions are covered on Linux; non-POSIX platforms use direct-parent termination and do not claim descendant cleanup.
 - The runner keeps the existing explicit 1 MiB-per-stream capture cap and marks output beyond the cap as truncated.
+
+## Fix round 4
+
+### Status
+
+Complete.
+
+### Commit
+
+`da61b69` — `fix: close bundled shell command gap`
+
+### Changes
+
+- Added positive-control executions for copied versioned and custom Python interpreters; each valid `-c` payload creates a marker before the runner-guarded forms are tested.
+- Added regressions for bundled shell command-string options including `sh -ce`, `bash -ec`, and `bash -xec`, while retaining the ordinary-tool `echo -e hello` control.
+- Rejected bundled short shell options containing `c` (for example, `-ec` and `-xec`) only for classified shell executables, preserving ordinary tool flags and existing POSIX timeout/artifact behavior.
+
+### Exact checks and results
+
+- `PYTHONPATH=src python -m unittest tests.test_runner.RunnerTests.test_shell_and_eval_forms_are_rejected_without_executing_marker -v`: initially failed for the new bundled shell cases (3 failures), then passed after the runner fix.
+- `PYTHONPATH=src python -m unittest tests.test_runner.RunnerTests.test_shell_and_eval_forms_are_rejected_without_executing_marker tests.test_runner.RunnerTests.test_versioned_and_custom_allowlisted_interpreters_reject_bundled_eval_flags tests.test_runner.RunnerTests.test_ordinary_allowlisted_tool_keeps_legitimate_e_flag -v`: passed; 3 tests ran successfully.
+- `PYTHONPATH=src python -m unittest tests.test_runner tests.test_reproduction -v`: passed; 19 focused tests ran successfully.
+- `make test`: passed; 42 tests ran successfully.
+- `PYTHONPATH=src python -m compileall -q src tests`: passed.
+- `git diff --check`: passed.
+
+### Concerns
+
+- Shell bundled-option detection remains intentionally scoped to shell basenames or explicit `CommandPolicy.shell_commands`; ordinary tool options such as `echo -e hello` remain permitted.
+- Linux process-group cleanup and `/proc` child-liveness assertions remain Linux-scoped; non-POSIX platforms retain direct-parent termination behavior.
