@@ -4,21 +4,32 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import sys
+import re
 
+from .paths import ensure_contained
 from .reports import write_report
 from .server import ServerConfig, create_server
+from .store import RunStore
+
+
+_RUN_ID = re.compile(r"^run-[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def main(argv=None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.command == "export":
-        source = args.run_id
-        candidate = Path(args.data_root) / "runs" / args.run_id
-        if candidate.exists():
-            source = candidate
-        output = write_report(source, args.destination, args.format)
+        data_root = Path(args.data_root).expanduser().resolve(strict=False)
+        if not _RUN_ID.fullmatch(args.run_id):
+            raise ValueError("run_id must be an opaque local run ID")
+        store = RunStore(data_root)
+        run = store.get_run(args.run_id)
+        events = store.list_events(args.run_id)
+        destination = Path(args.destination).expanduser()
+        if not destination.is_absolute():
+            destination = data_root / destination
+        destination = ensure_contained(destination, data_root)
+        output = write_report(run, destination, args.format, events=events)
         print(output)
         return 0
 

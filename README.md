@@ -45,8 +45,9 @@ The local server entry point is started with:
 make run
 ```
 
-The checked-in demo flow is reserved for the future fixture workflow and is
-started with:
+The fixture-backed demo starts the same localhost server with the checked-in
+broken-parser repository and recorded OmniRush responses. It is clearly
+labeled `recorded/demo` and ignores repository or session overrides:
 
 ```sh
 make demo

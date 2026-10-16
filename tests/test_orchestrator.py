@@ -281,11 +281,12 @@ class OrchestratorTests(unittest.TestCase):
 +print('fixed')
 """
                 orchestrator.propose_patch(run_id, diff)
+                digest = orchestrator.store.get_run(run_id).patch["digest"]
                 if action == "reject":
-                    result = orchestrator.reject_patch(run_id, "alice", "2026-10-15T00:00:00Z")
+                    result = orchestrator.reject_patch(run_id, "alice", "2026-10-15T00:00:00Z", digest)
                     expected = "rejected"
                 else:
-                    result = orchestrator.request_another_diagnosis(run_id, "alice", "2026-10-15T00:00:00Z")
+                    result = orchestrator.request_another_diagnosis(run_id, "alice", "2026-10-15T00:00:00Z", digest)
                     expected = "request_another_diagnosis"
                 self.assertEqual(result.state, "diagnosing")
                 self.assertEqual(result.patch["decision"]["action"], expected)

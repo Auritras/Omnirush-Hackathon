@@ -138,7 +138,13 @@ def render_json(run: Any, events: Sequence[Any]) -> str:
     return json.dumps(_build_payload(run, events, {}), sort_keys=True, indent=2, ensure_ascii=False) + "\n"
 
 
-def write_report(run_id: Any, destination: os.PathLike[str] | str, format: str) -> Path:
+def write_report(
+    run_id: Any,
+    destination: os.PathLike[str] | str,
+    format: str,
+    *,
+    events: Sequence[Any] | None = None,
+) -> Path:
     """Load a persisted run and write a Markdown or JSON report.
 
     The normal server integration passes a snapshot path or a run record. For
@@ -149,13 +155,15 @@ def write_report(run_id: Any, destination: os.PathLike[str] | str, format: str) 
     normalized = str(format).casefold()
     if normalized not in {"markdown", "md", "json"}:
         raise ValueError("report format must be markdown or json")
-    run, events = _load_run_source(run_id, Path(destination))
+    run, loaded_events = _load_run_source(run_id, Path(destination))
+    if events is not None:
+        loaded_events = list(events)
     target = Path(destination)
     suffix = ".json" if normalized == "json" else ".md"
     if target.exists() and target.is_dir() or target.suffix == "":
         target = target / f"{_run_id(run)}{suffix}"
     target.parent.mkdir(parents=True, exist_ok=True)
-    content = render_json(run, events) if normalized == "json" else render_markdown(run, events, {})
+    content = render_json(run, loaded_events) if normalized == "json" else render_markdown(run, loaded_events, {})
     target.write_text(content, encoding="utf-8")
     return target
 

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import ipaddress
 import json
 from pathlib import Path
-import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Mapping
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -61,9 +60,9 @@ class ServerConfig:
             port=self.port,
             max_body_bytes=self.max_body_bytes,
             max_artifact_bytes=self.max_artifact_bytes,
-            repository=self.repository,
-            recorded_fixture=self.recorded_fixture,
-            session_client=self.session_client,
+            repository=_default_fixture_repository() if self.demo else self.repository,
+            recorded_fixture=_default_recorded_fixture() if self.demo else self.recorded_fixture,
+            session_client=None if self.demo else self.session_client,
             runner=self.runner,
             demo=self.demo,
         )
@@ -77,7 +76,9 @@ class ProofFixHTTPServer(ThreadingHTTPServer):
         self.config = config
         self.store = RunStore(config.data_root)
         self.workspace_manager = WorkspaceManager(config.data_root / "workspace-root")
-        if config.session_client is not None:
+        if config.demo:
+            session_client = RecordedSessionClient(_default_recorded_fixture())
+        elif config.session_client is not None:
             session_client = config.session_client
         else:
             fixture = config.recorded_fixture
@@ -123,14 +124,35 @@ def _make_handler():
         def do_PATCH(self):  # noqa: N802 - stdlib handler API
             self._method_not_allowed()
 
+        def do_HEAD(self):  # noqa: N802 - stdlib handler API
+            self._method_not_allowed()
+
+        def do_OPTIONS(self):  # noqa: N802 - stdlib handler API
+            self._method_not_allowed()
+
+        def do_CONNECT(self):  # noqa: N802 - stdlib handler API
+            self._method_not_allowed()
+
+        def do_TRACE(self):  # noqa: N802 - stdlib handler API
+            self._method_not_allowed()
+
+        def send_error(self, code, message=None, explain=None):  # noqa: N802 - stdlib handler API
+            self._send_error(code, message or "HTTP request is not supported")
+
         def log_message(self, _format, *args):
             return
+
+        def handle(self):
+            try:
+                super().handle()
+            except ConnectionResetError:
+                return
 
         def _handle(self, method: str):
             try:
                 parsed = urlsplit(self.path)
                 route = [unquote(item) for item in parsed.path.split("/") if item]
-                if any(item in {".", ".."} for item in route):
+                if any(item in {".", ".."} or "/" in item or "\\" in item for item in route):
                     raise _HTTPError(400, "unsafe path")
                 if route and route[0] == "api":
                     route.pop(0)
@@ -177,22 +199,27 @@ def _make_handler():
             raise _HTTPError(404, "not found")
 
         def _artifact(self, run_id: str, reference: str):
-            ref = safe_artifact_path(self.server.config.data_root / "runs" / run_id, reference)
-            candidates = [ref]
+            run = self.server.store.get_run(run_id)
+            run_root = self.server.config.data_root / "runs" / run_id
+            candidates = [safe_artifact_path(run_root, reference)]
             workspace_root = self.server.config.data_root / "workspace-root"
-            if not ref.is_file():
-                # Runner artifacts live beside the disposable snapshot. The
-                # search stays below the configured workspace root.
-                relative = Path(reference)
-                candidates.extend(workspace_root.glob(f"workspaces/*/{relative.as_posix()}"))
+            snapshot = getattr(self.server.orchestrator, "_snapshots", {}).get(run_id)
+            if snapshot is not None:
+                candidates.append(safe_artifact_path(snapshot.path, reference))
+            for evidence in run.evidence:
+                if not isinstance(evidence, Mapping) or evidence.get("kind") != "repository_snapshot":
+                    continue
+                details = evidence.get("details")
+                if not isinstance(details, Mapping) or not isinstance(details.get("path"), str):
+                    continue
+                candidates.append(safe_artifact_path(workspace_root, f"{details['path']}/{reference}"))
             selected = next((path for path in candidates if path.is_file() and ensure_contained(path, self.server.config.data_root)), None)
             if selected is None:
                 raise _HTTPError(404, "artifact not found")
             if selected.stat().st_size > self.server.config.max_artifact_bytes:
                 raise _HTTPError(413, "artifact exceeds the configured size limit")
             body = selected.read_bytes()
-            content_type = mimetypes.guess_type(selected.name)[0] or "text/plain"
-            return 200, f"{content_type}; charset=utf-8", body
+            return 200, _artifact_content_type(selected), body
 
         def _post(self, route: list[str], payload: Any):
             if route == ["runs"] or route == ["intake"]:
@@ -217,13 +244,13 @@ def _make_handler():
                 result = orchestrator.advance_reproduction(run_id)
             elif action in {"diagnose", "diagnosis", "advance-diagnosis", "retry-diagnosis", "request-diagnosis", "diagnosis-retry"} or (action in {"patch", "diagnose", "diagnosis"} and subaction in {"request-diagnosis", "diagnosis-retry", "retry", "request-another-diagnosis"}):
                 if action in {"retry-diagnosis", "request-diagnosis", "diagnosis-retry"} or subaction in {"request-diagnosis", "diagnosis-retry", "retry", "request-another-diagnosis"}:
-                    result = orchestrator.request_another_diagnosis(run_id, _actor(payload), _timestamp(payload))
+                    result = orchestrator.request_another_diagnosis(run_id, _actor(payload), _timestamp(payload), _digest(payload))
                 else:
                     result = orchestrator.advance_diagnosis(run_id)
             elif action in {"approve", "approval"} or (action == "patch" and subaction == "approve"):
                 result = orchestrator.approve_patch(run_id, _actor(payload), _timestamp(payload), _digest(payload))
             elif action == "reject" or (action == "patch" and subaction == "reject"):
-                result = orchestrator.reject_patch(run_id, _actor(payload), _timestamp(payload))
+                result = orchestrator.reject_patch(run_id, _actor(payload), _timestamp(payload), _digest(payload))
             elif action in {"propose", "patch"}:
                 result = orchestrator.propose_patch(run_id, _required_text(payload, "diff"), payload.get("scope"))
             elif action in {"verify", "verification"}:
@@ -235,6 +262,8 @@ def _make_handler():
             return 200, "application/json; charset=utf-8", result.to_dict()
 
         def _export(self, run_id: str, payload: Mapping[str, Any]):
+            run = self.server.store.get_run(run_id)
+            events = self.server.store.list_events(run_id)
             report_format = str(payload.get("format", "markdown")).casefold()
             if report_format not in {"markdown", "md", "json"}:
                 raise _HTTPError(400, "report format must be markdown or json")
@@ -243,12 +272,14 @@ def _make_handler():
             export_root.mkdir(parents=True, exist_ok=True)
             filename = f"{run_id}.{normalized}"
             if isinstance(payload.get("filename"), str) and payload["filename"]:
-                filename = Path(payload["filename"]).name
+                requested = payload["filename"]
+                if Path(requested).name != requested or "/" in requested or "\\" in requested or requested in {".", ".."}:
+                    raise _HTTPError(400, "export filename must be a simple relative filename")
+                filename = requested
                 if not filename.endswith(f".{normalized}"):
                     filename += f".{normalized}"
             destination = ensure_contained(export_root / filename, export_root)
-            source = self.server.config.data_root / "runs" / run_id
-            output = write_report(source, destination, report_format)
+            output = write_report(run, destination, report_format, events=events)
             return 200, "application/json; charset=utf-8", {"run_id": run_id, "format": report_format, "path": str(output)}
 
         def _read_json(self):
@@ -259,11 +290,11 @@ def _make_handler():
                 raise _HTTPError(400, "invalid Content-Length") from exc
             if length < 0 or length > self.server.config.max_body_bytes:
                 raise _HTTPError(413, "request body exceeds the configured bounded size")
-            if length == 0:
-                return {}
             content_type = self.headers.get("Content-Type", "")
             if content_type.split(";", 1)[0].strip().casefold() != "application/json":
                 raise _HTTPError(415, "JSON content type is required")
+            if length == 0:
+                raise _HTTPError(415, "JSON request body is required")
             raw = self.rfile.read(length)
             try:
                 decoded = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant)
@@ -379,3 +410,18 @@ def _required_plan_value(payload: Mapping[str, Any], *keys: str):
 
 def _default_fixture_repository() -> Path:
     return Path(__file__).resolve().parents[2] / "fixtures" / "broken-parser-repo"
+
+
+def _default_recorded_fixture() -> Path:
+    return Path(__file__).resolve().parents[2] / "fixtures" / "omnirush" / "reproducible-run.json"
+
+
+def _artifact_content_type(path: Path) -> str:
+    suffix = path.suffix.casefold()
+    if suffix == ".json":
+        return "application/json; charset=utf-8"
+    if suffix in {".md", ".markdown"}:
+        return "text/markdown; charset=utf-8"
+    if suffix in {".log", ".txt", ".out", ".err"}:
+        return "text/plain; charset=utf-8"
+    return "application/octet-stream"

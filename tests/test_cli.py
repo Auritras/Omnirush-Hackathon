@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from proofix import cli
+from proofix.store import RunStore
 
 
 class CLITests(unittest.TestCase):
@@ -27,12 +28,25 @@ class CLITests(unittest.TestCase):
 
     def test_export_delegates_to_report_layer(self):
         with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "out.json"
+            data_root = Path(directory) / "data"
+            run = RunStore(data_root).create_run({"repository_path": ".", "command": "false", "failure_text": "f"})
+            output = data_root / "exports" / "out.json"
             with patch.object(cli, "write_report", return_value=output) as writer:
-                self.assertEqual(cli.main(["export", "run-123", str(output), "--format", "json"]), 0)
+                self.assertEqual(cli.main(["export", run.run_id, "exports/out.json", "--format", "json", "--data-root", str(data_root)]), 0)
             writer.assert_called_once()
-            self.assertEqual(writer.call_args.args[0], "run-123")
+            self.assertEqual(writer.call_args.args[0].run_id, run.run_id)
             self.assertEqual(writer.call_args.args[2], "json")
+
+    def test_export_rejects_unknown_or_path_run_ids_and_outside_destinations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data_root = Path(directory) / "data"
+            run = RunStore(data_root).create_run({"repository_path": ".", "command": "false", "failure_text": "f"})
+            with self.assertRaises(ValueError):
+                cli.main(["export", "run-missing", "exports/out.json", "--data-root", str(data_root)])
+            with self.assertRaises(ValueError):
+                cli.main(["export", "../" + run.run_id, "exports/out.json", "--data-root", str(data_root)])
+            with self.assertRaises(ValueError):
+                cli.main(["export", run.run_id, str(Path(directory).parent / "outside.json"), "--data-root", str(data_root)])
 
 
 if __name__ == "__main__":

@@ -11,7 +11,6 @@ from .intake import IntakeRequest, sanitize_intake
 from .models import DomainError, EventRecord, PatchProposal, RunRecord
 from .omnirush import OmniRushSessionClient, RecordedSessionClient, run_specialists
 from .redaction import redact_text
-from .redaction import redact_text
 from .reproduction import compare_failure
 from .runner import CommandPolicy, run_command
 from .state import transition
@@ -179,19 +178,7 @@ class ProofFixOrchestrator:
         run = self.store.get_run(run_id)
         if run.state != "awaiting_approval" or not run.patch:
             raise DomainError(f"patch is not awaiting approval: {run.state}")
-        if not isinstance(patch_digest, str) or not patch_digest:
-            raise DomainError("explicit current patch digest is required")
-        # The durable run snapshot is authoritative.  A process-local proposal
-        # may be stale or belong to a different proposal after restart.
-        proposal = self._proposal_from_run(run)
-        if proposal is None:
-            raise DomainError("patch proposal is unavailable")
-        current_digest = str(run.patch.get("digest"))
-        persisted_run_id = run.patch.get("run_id")
-        if persisted_run_id != run_id:
-            raise DomainError("patch proposal is bound to a different run")
-        if patch_digest != current_digest or patch_digest != proposal.digest:
-            raise DomainError("patch digest does not match the persisted current proposal")
+        proposal, current_digest = self._current_proposal(run, patch_digest)
         action = approve_patch(run_id, patch_digest, actor, timestamp, proposal=proposal, current_digest=current_digest)
         self._patches[run_id] = proposal
         self._append_transition(run, "applying", "orchestrator:patch_approved", {"stage": "patch", "outcome": "approved", "patch_digest": action.patch_digest, "actor": actor, "timestamp": timestamp})
@@ -199,28 +186,24 @@ class ProofFixOrchestrator:
         self.store.update_run(replace(current, patch={**current.patch, "approval": action.to_dict()}))
         return self.store.get_run(run_id)
 
-    def reject_patch(self, run_id: str, actor: str, timestamp: str) -> RunRecord:
+    def reject_patch(self, run_id: str, actor: str, timestamp: str, patch_digest: str | None = None) -> RunRecord:
         run = self.store.get_run(run_id)
         if run.state != "awaiting_approval" or not run.patch:
             raise DomainError(f"patch is not awaiting approval: {run.state}")
-        proposal = self._patches.get(run_id) or self._proposal_from_run(run)
-        if proposal is None:
-            raise DomainError("patch proposal is unavailable")
-        action = reject_patch(run_id, actor, timestamp, digest=str(run.patch.get("digest")), proposal=proposal, current_digest=str(run.patch.get("digest")))
+        proposal, current_digest = self._current_proposal(run, patch_digest)
+        action = reject_patch(run_id, actor, timestamp, digest=current_digest, proposal=proposal, current_digest=current_digest)
         current = self.store.get_run(run_id)
         self.store.update_run(replace(current, patch={**current.patch, "decision": action.to_dict()}))
         self._append_transition(self.store.get_run(run_id), "diagnosing", "orchestrator:patch_rejected", {"stage": "patch", "outcome": "rejected", "actor": actor, "timestamp": timestamp, "patch_digest": action.patch_digest})
         return self.store.get_run(run_id)
 
-    def request_another_diagnosis(self, run_id: str, actor: str, timestamp: str) -> RunRecord:
+    def request_another_diagnosis(self, run_id: str, actor: str, timestamp: str, patch_digest: str | None = None) -> RunRecord:
         run = self.store.get_run(run_id)
         if run.state != "awaiting_approval" or not run.patch:
             raise DomainError(f"patch is not awaiting approval: {run.state}")
         current = self.store.get_run(run_id)
-        proposal = self._patches.get(run_id) or self._proposal_from_run(current)
-        if proposal is None:
-            raise DomainError("patch proposal is unavailable")
-        action = request_another_diagnosis(run_id, actor, timestamp, digest=str(current.patch.get("digest")))
+        _proposal, current_digest = self._current_proposal(current, patch_digest)
+        action = request_another_diagnosis(run_id, actor, timestamp, digest=current_digest)
         decision = action.to_dict()
         self.store.update_run(replace(current, patch={**current.patch, "decision": decision}))
         self._append_transition(self.store.get_run(run_id), "diagnosing", "orchestrator:request_another_diagnosis", {"stage": "patch", "outcome": "diagnosis_requested", "actor": actor, "timestamp": timestamp, "patch_digest": decision["patch_digest"]})
@@ -288,6 +271,20 @@ class ProofFixOrchestrator:
         elif isinstance(run.patch.get("decision"), Mapping):
             proposal.approval = run.patch["decision"]  # type: ignore[attr-defined]
         return proposal
+
+    def _current_proposal(self, run: RunRecord, patch_digest: str | None) -> tuple[PatchProposal, str]:
+        """Validate an explicit action digest against the durable proposal."""
+        if not isinstance(patch_digest, str) or not patch_digest:
+            raise DomainError("explicit current patch digest is required")
+        proposal = self._proposal_from_run(run)
+        if proposal is None:
+            raise DomainError("patch proposal is unavailable")
+        current_digest = str((run.patch or {}).get("digest"))
+        if (run.patch or {}).get("run_id") != run.run_id:
+            raise DomainError("patch proposal is bound to a different run")
+        if patch_digest != current_digest or patch_digest != proposal.digest:
+            raise DomainError("patch digest does not match the persisted current proposal")
+        return proposal, current_digest
 
     def _run_local(self, command: str, snapshot: Any) -> Any:
         workspace = getattr(snapshot, "path", getattr(snapshot, "workspace", snapshot))
