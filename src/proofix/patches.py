@@ -188,7 +188,7 @@ def _parse_diff(diff: str) -> list[str]:
         line = lines[index]
         if not line.startswith("diff --git "):
             raise ValueError("malformed unified diff header")
-        old, new = _parse_git_paths(line[len("diff --git "):])
+        git_paths = line[len("diff --git "):]
         index += 1
         metadata_paths: dict[str, str] = {}
         has_mode_metadata = False
@@ -209,7 +209,24 @@ def _parse_diff(diff: str) -> list[str]:
             if metadata.startswith("Binary files "):
                 raise ValueError("binary patches are not supported")
             break
-        if index + 1 >= len(lines) or not lines[index].startswith("--- ") or not lines[index + 1].startswith("+++ "):
+
+        old_header: str | None = None
+        new_header: str | None = None
+        has_file_headers = index + 1 < len(lines) and lines[index].startswith("--- ") and lines[index + 1].startswith("+++ ")
+        if has_file_headers:
+            old_header = _normalize_path(_parse_file_header(lines[index][4:]), allow_dev_null=True)
+            new_header = _normalize_path(_parse_file_header(lines[index + 1][4:]), allow_dev_null=True)
+
+        expected_paths: tuple[str, str] | None = None
+        if {"from", "to"}.issubset(metadata_paths):
+            expected_paths = (metadata_paths["from"], metadata_paths["to"])
+        elif old_header is not None and new_header is not None and old_header != "/dev/null" and new_header != "/dev/null":
+            # File headers disambiguate unquoted paths containing the token
+            # `` b/`` when no rename metadata is present.
+            expected_paths = (old_header, new_header)
+        old, new = _parse_git_paths(git_paths, expected=expected_paths)
+
+        if not has_file_headers:
             if not has_mode_metadata and not {"from", "to"}.issubset(metadata_paths):
                 raise ValueError("unified diff is missing file headers")
             if {"from", "to"}.issubset(metadata_paths) and (metadata_paths["from"] != old or metadata_paths["to"] != new):
@@ -220,8 +237,7 @@ def _parse_diff(diff: str) -> list[str]:
             if relative not in files:
                 files.append(relative)
             continue
-        old_header = _normalize_path(_parse_file_header(lines[index][4:]), allow_dev_null=True)
-        new_header = _normalize_path(_parse_file_header(lines[index + 1][4:]), allow_dev_null=True)
+
         if (old != old_header and old_header != "/dev/null") or (new != new_header and new_header != "/dev/null") or old == new == "/dev/null":
             raise ValueError("diff file headers do not match diff metadata")
         relative = new if new != "/dev/null" else old
@@ -275,23 +291,38 @@ def _normalize_path(value: str, allow_dev_null: bool = False) -> str:
     return path.as_posix()
 
 
-def _parse_git_paths(value: str) -> tuple[str, str]:
-    # Git may emit unquoted spaces as: ``a/old name.txt b/new name.txt``.
-    # Preserve the two halves by using the second `` b/`` prefix as the
-    # separator rather than splitting on whitespace.
-    unquoted = re.match(r"^a/(.*) b/(.*)$", value)
-    if unquoted:
-        return (
-            _normalize_path("a/" + unquoted.group(1), allow_dev_null=True),
-            _normalize_path("b/" + unquoted.group(2), allow_dev_null=True),
-        )
+def _parse_git_paths(value: str, *, expected: tuple[str, str] | None = None) -> tuple[str, str]:
+    """Parse Git's two path operands, using metadata or file headers to disambiguate."""
     try:
         paths = shlex.split(value, posix=True)
     except ValueError as exc:
         raise ValueError("malformed diff paths") from exc
-    if len(paths) != 2:
-        raise ValueError("malformed diff paths")
-    return _normalize_path(paths[0], allow_dev_null=True), _normalize_path(paths[1], allow_dev_null=True)
+    if len(paths) == 2 and not (" " in value and not value.startswith('"')):
+        parsed = (_normalize_path(paths[0], allow_dev_null=True), _normalize_path(paths[1], allow_dev_null=True))
+        if expected is not None and parsed != expected:
+            raise ValueError("diff paths do not match file headers or rename metadata")
+        return parsed
+
+    # Unquoted Git headers use the literal `` b/`` prefix as the separator,
+    # but that token may also occur inside either path.  Enumerate every
+    # candidate and let trusted file headers/rename metadata select one.
+    candidates: list[tuple[str, str]] = []
+    separators = [match.start() for match in re.finditer(r" b/", value)]
+    for separator in separators:
+        left, right = value[:separator], value[separator + 1:]
+        if not left.startswith("a/") or not right.startswith("b/"):
+            continue
+        parsed = (_normalize_path(left, allow_dev_null=True), _normalize_path(right, allow_dev_null=True))
+        if parsed not in candidates:
+            candidates.append(parsed)
+    if expected is not None:
+        matches = [candidate for candidate in candidates if candidate == expected]
+        if len(matches) != 1:
+            raise ValueError("diff paths do not match file headers or rename metadata")
+        return matches[0]
+    if len(candidates) != 1:
+        raise ValueError("ambiguous diff paths" if candidates else "malformed diff paths")
+    return candidates[0]
 
 
 def _parse_file_header(value: str) -> str:

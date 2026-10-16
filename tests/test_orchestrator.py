@@ -273,6 +273,39 @@ class OrchestratorTests(unittest.TestCase):
                 self.assertEqual(result.patch["decision"]["action"], expected)
                 self.assertEqual(RunStore(root / "runs").replay(run_id).state, "diagnosing")
 
+    def test_verification_reconstructs_current_persisted_proposal_after_approval(self):
+        for mutation in ("diff", "files"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                repository = self._repository(root, "import sys\nprint('failure')\nsys.exit(1)\n")
+                orchestrator = self._orchestrator(root, repository, "reproducible-run.json")
+                run_id = orchestrator.start_run(sanitize_intake({"repository_path": str(repository), "command": "python case.py", "failure_text": "failure"}))
+                orchestrator.advance_reproduction(run_id)
+                orchestrator.advance_diagnosis(run_id)
+                diff = """diff --git a/case.py b/case.py
+--- a/case.py
++++ b/case.py
+@@ -1,3 +1 @@
+-import sys
+-print('failure')
+-sys.exit(1)
++print('fixed')
+"""
+                orchestrator.propose_patch(run_id, diff)
+                current = orchestrator.store.get_run(run_id)
+                orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z", patch_digest=current.patch["digest"])
+
+                persisted = orchestrator.store.get_run(run_id)
+                if mutation == "diff":
+                    persisted.patch["diff"] = persisted.patch["diff"].replace("print('fixed')", "print('tampered')")
+                else:
+                    persisted.patch["files"] = ["other.py"]
+                orchestrator.store.update_run(persisted)
+
+                result = orchestrator.verify_patch(run_id, VerificationPlan("python case.py", "python case.py"))
+                self.assertEqual(result.state, "verification_blocked")
+                self.assertEqual(result.verification["checks"][0]["name"], "patch_integrity")
+
     def test_restart_rejects_tampered_persisted_patch_digest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

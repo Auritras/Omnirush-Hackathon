@@ -210,7 +210,9 @@ class ProofFixOrchestrator:
         if run.state != "applying":
             raise DomainError(f"patch is not approved for verification: {run.state}")
         try:
-            proposal = self._patches.get(run_id) or self._proposal_from_run(run)
+            # Verification must be bound to the durable proposal that is
+            # current after approval; an in-memory proposal may be stale.
+            proposal = self._proposal_from_run(run)
         except DomainError as exc:
             self._append_transition(run, "verifying", "orchestrator:verification_started", {"stage": "verification", "outcome": "integrity_check"})
             blocked = {"status": "verification_blocked", "checks": [{"name": "patch_integrity", "status": "blocked", "details": {"error": str(exc)[:4096]}}]}

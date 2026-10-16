@@ -44,14 +44,12 @@ class PatchTests(unittest.TestCase):
             (repo / "old name.txt").write_text("same\n", encoding="utf-8")
             subprocess.run(["git", "add", "."], cwd=repo, check=True)
             subprocess.run(["git", "commit", "-qm", "old"], cwd=repo, check=True)
-            subprocess.run(["git", "mv", "old name.txt", "new name.txt"], cwd=repo, check=True)
-            diff = subprocess.check_output(["git", "diff", "--no-renames", "--cached"], cwd=repo, text=True)
+            (repo / "new b").mkdir()
+            subprocess.run(["git", "mv", "old name.txt", "new b/file.txt"], cwd=repo, check=True)
             # Use Git's rename form, which is unquoted for this fixture.
-            subprocess.run(["git", "reset", "-q"], cwd=repo, check=True)
-            subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
             diff = subprocess.check_output(["git", "diff", "--cached", "--no-ext-diff", "--no-color"], cwd=repo, text=True)
-            self.assertIn("diff --git a/old name.txt b/new name.txt", diff)
-            self.assertEqual(validate_unified_diff(diff, repo).files, ["new name.txt"])
+            self.assertIn("diff --git a/old name.txt b/new b/file.txt", diff)
+            self.assertEqual(validate_unified_diff(diff, repo).files, ["new b/file.txt"])
 
     def test_malformed_absolute_traversal_and_scope_diffs_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
