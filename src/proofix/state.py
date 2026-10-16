@@ -46,10 +46,18 @@ def transition(run: RunRecord, target: str, *, event_kind: str, details: Mapping
     if not (owner.startswith("orchestrator:") or owner.startswith("orchestrator_") or owner.startswith("orchestrator.")):
         raise DomainError("only orchestrator-owned events may change run state")
     forbidden = {"state", "status", "target_state", "next_state", "state_after"}
-    if not owner.startswith("orchestrator") and forbidden.intersection(details):
-        raise DomainError("agent-supplied status changes are not accepted")
+    if _contains_forbidden_transition_field(details, forbidden):
+        raise DomainError("status and transition fields are not accepted in event details")
     if run.state not in ALLOWED_TRANSITIONS or target not in ALLOWED_TRANSITIONS:
         raise DomainError(f"unknown run state: {run.state if run.state not in ALLOWED_TRANSITIONS else target}")
     if not can_transition(run.state, target):
         raise DomainError(f"invalid transition: {run.state} -> {target}")
     return replace(run, state=target, updated_at=utc_timestamp())
+
+
+def _contains_forbidden_transition_field(value: Any, forbidden: set[str]) -> bool:
+    if isinstance(value, Mapping):
+        return any(key in forbidden or _contains_forbidden_transition_field(nested, forbidden) for key, nested in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_forbidden_transition_field(item, forbidden) for item in value)
+    return False

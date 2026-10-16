@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from pathlib import PurePosixPath
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
 from .models import MAX_INLINE_FIELD, SCHEMA_VERSION
+from .redaction import redact_text
 
 
 class SchemaError(ValueError):
@@ -223,7 +225,7 @@ def _object(payload: Mapping[str, Any], label: str, allowed: set[str]) -> dict[s
 def _text(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value or "\x00" in value or len(value) > MAX_INLINE_FIELD:
         raise SchemaError(f"{label} must be bounded non-empty text")
-    return value
+    return _redact(value)
 
 
 def _optional_text(value: Any, label: str) -> str | None:
@@ -274,12 +276,19 @@ def _evidence(value: Any, label: str, *, required: bool) -> tuple[Evidence, ...]
     for item in value:
         if not isinstance(item, Mapping):
             raise SchemaError(f"{label} entries must be objects")
+        allowed = {"kind", "summary", "path", "line", "command", "result", "artifact_ref", "url", "details"}
+        unknown = set(item).difference(allowed)
+        if unknown:
+            raise SchemaError(f"unknown evidence fields: {', '.join(sorted(unknown))}")
         kind = item.get("kind")
+        if not isinstance(kind, str):
+            raise SchemaError("evidence kind must be text")
         if kind not in _EVIDENCE_KINDS:
             raise SchemaError(f"unsupported evidence kind: {kind}")
         summary = item.get("summary", "")
-        if summary and (not isinstance(summary, str) or len(summary) > MAX_INLINE_FIELD):
+        if not isinstance(summary, str) or len(summary) > MAX_INLINE_FIELD or "\x00" in summary:
             raise SchemaError("evidence summary is invalid")
+        summary = _redact(summary)
         if kind == "file" and "path" not in item:
             raise SchemaError("file evidence requires path")
         path = _relative_path(item["path"], "evidence path") if kind == "file" else item.get("path")
@@ -306,8 +315,43 @@ def _evidence(value: Any, label: str, *, required: bool) -> tuple[Evidence, ...]
             parsed = urlparse(url) if isinstance(url, str) else None
             if parsed is None or parsed.scheme != "https" or not parsed.netloc:
                 raise SchemaError("evidence URL must be HTTPS")
+            url = _redact(url)
         details = item.get("details", {})
         if not isinstance(details, Mapping):
             raise SchemaError("evidence details must be an object")
-        result.append(Evidence(kind, summary or "", path, line, command, result_text, artifact_ref, url, dict(details)))
+        details = _details(details)
+        result.append(Evidence(kind, summary, path, line, command, result_text, artifact_ref, url, details))
     return tuple(result)
+
+
+def _redact(value: str) -> str:
+    return redact_text(value)[0]
+
+
+def _details(value: Mapping[str, Any]) -> dict[str, Any]:
+    if any(not isinstance(key, str) for key in value):
+        raise SchemaError("evidence detail keys must be text")
+    cleaned = _redact_value(dict(value))
+    try:
+        encoded = json.dumps(cleaned, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise SchemaError("evidence details must be JSON-compatible") from exc
+    if len(encoded) > MAX_INLINE_FIELD * 4:
+        raise SchemaError("evidence details are too large")
+    return cleaned
+
+
+def _redact_value(value: Any) -> Any:
+    if isinstance(value, str):
+        if len(value) > MAX_INLINE_FIELD:
+            raise SchemaError("evidence detail text is too large")
+        return _redact(value)
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise SchemaError("evidence detail keys must be text")
+        return {key: _redact_value(nested) for key, nested in value.items()}
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, tuple):
+        raise SchemaError("evidence details must use JSON arrays, not tuples")
+    return value

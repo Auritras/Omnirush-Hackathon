@@ -61,6 +61,18 @@ class IntakeTests(unittest.TestCase):
             },
         )
 
+    def test_raw_request_is_normalized_and_empty_failure_text_is_rejected(self):
+        request = IntakeRequest(
+            repository_path="/tmp/repo",
+            command="false",
+            failure_text="API_KEY=raw-secret",
+            constraints=("password=constraint-secret",),
+        )
+        self.assertNotIn("raw-secret", request.failure_text)
+        self.assertNotIn("constraint-secret", request.constraints[0])
+        with self.assertRaises(ValueError):
+            IntakeRequest(repository_path="/tmp/repo", command="false", failure_text="")
+
 
 if __name__ == "__main__":
     unittest.main()

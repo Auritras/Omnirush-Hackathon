@@ -100,6 +100,80 @@ class SchemaTests(unittest.TestCase):
                     "evidence": EVIDENCE,
                 }
             )
+
+    def test_evidence_records_are_strict_and_model_text_is_redacted(self):
+        with self.assertRaises(SchemaError):
+            validate_triage(
+                {
+                    "schema_version": "1.0",
+                    "category": "unknown",
+                    "suspected_subsystem": "parser",
+                    "relevant_files": [],
+                    "command_assumptions": [],
+                    "confidence": 0.2,
+                    "evidence": [{"kind": "file", "path": "src/parser.py", "summary": "ok", "unexpected": "nope"}],
+                }
+            )
+        with self.assertRaises(SchemaError):
+            validate_triage(
+                {
+                    "schema_version": "1.0",
+                    "category": "unknown",
+                    "suspected_subsystem": "parser",
+                    "relevant_files": [],
+                    "command_assumptions": [],
+                    "confidence": 0.2,
+                    "evidence": [{"kind": "file", "path": "src/parser.py", "summary": 42}],
+                }
+            )
+        with self.assertRaises(SchemaError):
+            validate_triage(
+                {
+                    "schema_version": "1.0",
+                    "category": "unknown",
+                    "suspected_subsystem": "parser",
+                    "relevant_files": [],
+                    "command_assumptions": [],
+                    "confidence": 0.2,
+                    "evidence": [{"kind": "file", "path": "src/parser.py", "details": "not-an-object"}],
+                }
+            )
+        triage = validate_triage(
+            {
+                "schema_version": "1.0",
+                "category": "unknown",
+                "suspected_subsystem": "password=model-subsystem-secret",
+                "relevant_files": [],
+                "command_assumptions": ["API_KEY=model-assumption-secret"],
+                "confidence": 0.2,
+                "evidence": [
+                    {
+                        "kind": "log",
+                        "summary": "password=model-summary-secret",
+                        "details": {"message": "TOKEN=model-detail-secret"},
+                    }
+                ],
+            }
+        )
+        encoded = repr(triage.to_dict())
+        for secret in ("model-subsystem-secret", "model-assumption-secret", "model-summary-secret", "model-detail-secret"):
+            self.assertNotIn(secret, encoded)
+
+        patch = validate_patch_proposal(
+            {
+                "schema_version": "1.0",
+                "digest": "sha256:abc",
+                "files": ["src/parser.py"],
+                "regression_test": "password=model-regression-secret",
+                "risk_summary": "TOKEN=model-risk-secret",
+                "verification_plan": ["API_KEY=model-plan-secret"],
+                "evidence": EVIDENCE,
+                "diff": "password=model-diff-secret",
+            }
+        )
+        patch_text = repr(patch.to_dict())
+        for secret in ("model-regression-secret", "model-risk-secret", "model-plan-secret", "model-diff-secret"):
+            self.assertNotIn(secret, patch_text)
         with self.assertRaises(SchemaError):
             validate_patch_proposal(
                 {

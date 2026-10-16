@@ -56,7 +56,7 @@ class RecordedSessionClient(OmniRushSessionClient):
                 document = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 raise ValueError(f"could not load recorded OmniRush fixture: {path}") from exc
-        if not isinstance(document, Mapping) or document.get("mode") not in {"recorded", "recorded/demo"}:
+        if not isinstance(document, Mapping) or document.get("mode") != "recorded/demo":
             raise ValueError("recorded OmniRush fixtures must be labeled recorded/demo")
         raw = document.get("responses")
         if isinstance(raw, Mapping):
@@ -103,7 +103,16 @@ def run_specialists(context: Mapping[str, Any], client: OmniRushSessionClient) -
             raise SchemaError("specialist response must be an object")
         candidate = dict(payload)
         candidate.setdefault("role", envelope.get("role", role))
-        candidate.setdefault("session_id", envelope.get("session_id"))
+        outer_session_id = envelope.get("session_id")
+        nested_session_id = candidate.get("session_id")
+        if outer_session_id is not None and not isinstance(outer_session_id, str):
+            raise SchemaError("outer specialist session ID must be text")
+        if nested_session_id is not None and not isinstance(nested_session_id, str):
+            raise SchemaError("nested specialist session ID must be text")
+        if outer_session_id is not None and nested_session_id is not None and outer_session_id != nested_session_id:
+            raise SchemaError("nested specialist session ID does not match the outer session")
+        if outer_session_id is not None:
+            candidate["session_id"] = outer_session_id
         hypothesis = validate_hypothesis(candidate)
         if hypothesis.role != role:
             raise SchemaError("specialist role does not match requested role")

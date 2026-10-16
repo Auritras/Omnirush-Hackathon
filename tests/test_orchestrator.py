@@ -5,9 +5,12 @@ import unittest
 from pathlib import Path
 
 from proofix.intake import sanitize_intake
+from proofix.models import DomainError, EventRecord
 from proofix.omnirush import RecordedSessionClient, run_specialists
 from proofix.orchestrator import ProofFixOrchestrator
 from proofix.runner import CommandPolicy, run_command
+from proofix.schemas import SchemaError
+from proofix.state import transition
 from proofix.store import RunStore
 from proofix.worktree import WorkspaceManager
 
@@ -48,7 +51,7 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(len(diagnosed.hypotheses), 5)
             self.assertTrue(diagnosed.omnirush_sessions)
             events = orchestrator.store.list_events(run_id)
-            self.assertTrue(any(event.details.get("status") == "reproduced" for event in events))
+            self.assertTrue(any(event.status == "reproduced" for event in events))
             self.assertTrue(all(hypothesis.get("role") for hypothesis in diagnosed.hypotheses))
 
     def test_successful_or_different_failure_stops_with_evidence_without_diagnosis(self):
@@ -81,13 +84,96 @@ class OrchestratorTests(unittest.TestCase):
             root = Path(directory)
             repository = self._repository(root, "import sys\nprint('failure')\nsys.exit(2)\n")
             bad = root / "bad.json"
-            bad.write_text(json.dumps({"mode": "recorded", "responses": [{"role": "bad", "session_id": "s", "response": {"schema_version": "1.0", "hypothesis": "no evidence", "supporting_evidence": [], "contradicting_evidence": [], "confidence": 0.5, "experiment": "try"}}]}), encoding="utf-8")
+            bad.write_text(json.dumps({"mode": "recorded/demo", "responses": [{"role": "bad", "session_id": "s", "response": {"schema_version": "1.0", "hypothesis": "no evidence", "supporting_evidence": [], "contradicting_evidence": [], "confidence": 0.5, "experiment": "try"}}]}), encoding="utf-8")
             orchestrator = ProofFixOrchestrator(RunStore(root / "runs"), WorkspaceManager(root / "workspace-root"), run_command, RecordedSessionClient(bad))
             run_id = orchestrator.start_run(sanitize_intake({"repository_path": str(repository), "command": "python case.py", "failure_text": "failure"}))
             self.assertEqual(orchestrator.advance_reproduction(run_id).state, "reproduced")
-            with self.assertRaises(Exception):
+            with self.assertRaises(SchemaError):
                 orchestrator.advance_diagnosis(run_id)
             self.assertEqual(orchestrator.store.get_run(run_id).state, "reproduced")
+
+    def test_unexpected_runner_failure_is_recorded_and_blocks_the_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = self._repository(root, "print('failure')\n")
+
+            def exploding_runner(*_args, **_kwargs):
+                raise ZeroDivisionError("runner exploded")
+
+            orchestrator = ProofFixOrchestrator(
+                RunStore(root / "runs"),
+                WorkspaceManager(root / "workspace-root"),
+                exploding_runner,
+                RecordedSessionClient(Path("fixtures/omnirush/not-reproduced-run.json")),
+            )
+            run_id = orchestrator.start_run(sanitize_intake({"repository_path": str(repository), "command": "python case.py", "failure_text": "failure"}))
+            result = orchestrator.advance_reproduction(run_id)
+            self.assertEqual(result.state, "blocked")
+            self.assertTrue(result.evidence)
+            self.assertIn("runner exploded", repr(result.evidence))
+
+    def test_orchestrator_prefixed_client_status_cannot_transition_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = RunStore(Path(directory))
+            run = store.create_run({"repository_path": "/tmp/repo", "command": "false", "failure_text": "failure"})
+            with self.assertRaises(DomainError):
+                transition(run, "triaging", event_kind="orchestrator:client_status", details={"status": "verified"})
+            with self.assertRaises(DomainError):
+                store.append_event(
+                    EventRecord.new(
+                        run.run_id,
+                        "orchestrator:client_status",
+                        state_after="triaging",
+                        details={"target_state": "verified"},
+                    )
+                )
+            self.assertEqual(store.get_run(run.run_id).state, "created")
+
+    def test_outer_session_id_is_authoritative_and_nested_spoofing_is_rejected(self):
+        response = {
+            "schema_version": "1.0",
+            "hypothesis": "A cause",
+            "supporting_evidence": [{"kind": "file", "path": "src/parser.py"}],
+            "contradicting_evidence": [],
+            "confidence": 0.5,
+            "experiment": "Run the focused check",
+            "session_id": "nested-spoofed-session",
+        }
+        client = RecordedSessionClient(
+            [{"role": "single-specialist", "session_id": "outer-session", "response": response}]
+        )
+        with self.assertRaises(SchemaError):
+            run_specialists({}, client)
+
+    def test_model_hypothesis_and_evidence_text_are_redacted_before_return(self):
+        response = {
+            "schema_version": "1.0",
+            "hypothesis": "password=model-hypothesis-secret",
+            "supporting_evidence": [
+                {
+                    "kind": "log",
+                    "summary": "TOKEN=model-summary-secret",
+                    "details": {"message": "API_KEY=model-detail-secret"},
+                }
+            ],
+            "contradicting_evidence": [],
+            "confidence": 0.5,
+            "experiment": "Run the focused check",
+        }
+        client = RecordedSessionClient(
+            [{"role": "redaction-specialist", "session_id": "outer-session", "response": response}]
+        )
+        hypothesis = run_specialists({}, client)[0]
+        encoded = repr(hypothesis.to_dict())
+        for secret in ("model-hypothesis-secret", "model-summary-secret", "model-detail-secret"):
+            self.assertNotIn(secret, encoded)
+
+    def test_recorded_client_requires_explicit_recorded_demo_label(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / "fixture.json"
+            fixture.write_text(json.dumps({"mode": "recorded", "responses": []}), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                RecordedSessionClient(fixture)
 
     def test_direct_specialist_response_cannot_claim_state(self):
         client = RecordedSessionClient(Path("fixtures/omnirush/reproducible-run.json"))

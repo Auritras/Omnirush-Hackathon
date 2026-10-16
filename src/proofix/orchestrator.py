@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from .intake import IntakeRequest, sanitize_intake
 from .models import DomainError, EventRecord, RunRecord
 from .omnirush import OmniRushSessionClient, RecordedSessionClient, run_specialists
+from .redaction import redact_text
 from .reproduction import compare_failure
 from .runner import CommandPolicy, run_command
 from .state import transition
@@ -25,7 +26,7 @@ class ProofFixOrchestrator:
         self._snapshots: dict[str, Any] = {}
 
     def start_run(self, request: IntakeRequest | Mapping[str, Any]) -> str:
-        intake = request if isinstance(request, IntakeRequest) else sanitize_intake(request)
+        intake = sanitize_intake(request.to_dict() if isinstance(request, IntakeRequest) else request)
         run = self.store.create_run(intake.to_dict())
         triage = _triage(intake)
         self._append_transition(run, "triaging", "orchestrator:triage", {"stage": "triage", "triage": triage})
@@ -39,30 +40,32 @@ class ProofFixOrchestrator:
         run = self.store.get_run(run_id)
         if run.state != "reproducing":
             raise DomainError(f"run is not ready for reproduction: {run.state}")
-        intake = sanitize_intake(run.intake)
         try:
+            intake = sanitize_intake(run.intake)
             snapshot = self.workspace_manager.snapshot_repository(intake.repository_path)
             self._snapshots[run_id] = snapshot
             result = self._run_local(intake.command, snapshot)
             assessment = compare_failure(intake.failure_text, result)
             status = assessment.status.value
+            result_data = result.to_dict() if hasattr(result, "to_dict") else _result_dict(result)
             details = {
                 "stage": "reproduction",
-                "status": status,
+                "outcome": status,
                 "reason": assessment.reason,
                 "expected_exit_code": assessment.expected_exit_code,
                 "actual_exit_code": assessment.actual_exit_code,
-                "result": result.to_dict() if hasattr(result, "to_dict") else _result_dict(result),
+                "result": _without_transition_fields(result_data),
             }
             evidence = {
                 "kind": "reproduction",
                 "summary": assessment.reason,
-                "details": details,
+                "details": {"status": status, **details, "result": result_data},
             }
-        except (OSError, ValueError, RuntimeError) as exc:
+        except Exception as exc:
             status = "blocked"
-            details = {"stage": "reproduction", "status": status, "reason": str(exc)}
-            evidence = {"kind": "reproduction", "summary": str(exc), "details": details}
+            reason = redact_text(str(exc))[0][:4096]
+            details = {"stage": "reproduction", "outcome": status, "reason": reason}
+            evidence = {"kind": "reproduction", "summary": reason, "details": {"status": status, **details}}
         target = status if status in {"reproduced", "not_reproduced", "blocked"} else "blocked"
         run = self.store.get_run(run_id)
         self._append_transition(run, target, "orchestrator:reproduction_result", details)
@@ -124,7 +127,7 @@ class ProofFixOrchestrator:
             run_id=run.run_id,
             kind=kind,
             stage=str(details.get("stage")) if details.get("stage") else None,
-            status=str(details.get("status")) if details.get("status") else None,
+            status=str(details.get("outcome")) if details.get("outcome") else None,
             state_before=run.state,
             state_after=updated.state,
             details=dict(details),
@@ -159,3 +162,11 @@ def _result_dict(result: Any) -> dict[str, Any]:
         "blocked": bool(getattr(result, "blocked", False)),
         "blocked_reason": getattr(result, "blocked_reason", None),
     }
+
+
+def _without_transition_fields(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _without_transition_fields(item) for key, item in value.items() if key not in {"state", "status", "target_state", "next_state", "state_after"}}
+    if isinstance(value, list):
+        return [_without_transition_fields(item) for item in value]
+    return value

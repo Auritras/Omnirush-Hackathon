@@ -31,6 +31,23 @@ class IntakeRequest:
     commit_sha: str | None = None
     branch: str | None = None
 
+    def __post_init__(self) -> None:
+        """Normalize direct construction too; callers cannot bypass the boundary."""
+        object.__setattr__(self, "repository_path", _repository_path(self.repository_path))
+        object.__setattr__(self, "command", _text(self.command, "command", required=True))
+        object.__setattr__(self, "failure_text", _text(self.failure_text, "failure_text", required=True))
+        object.__setattr__(self, "constraints", _constraints(self.constraints))
+        object.__setattr__(self, "issue_url", _reference_url(self.issue_url, "issue_url", "/issues/"))
+        object.__setattr__(self, "pr_url", _reference_url(self.pr_url, "pr_url", "/pull/"))
+        commit_sha = self.commit_sha
+        if commit_sha is not None and (not isinstance(commit_sha, str) or not _SHA.fullmatch(commit_sha)):
+            raise ValueError("commit_sha must be a hexadecimal commit reference")
+        object.__setattr__(self, "commit_sha", commit_sha.lower() if commit_sha is not None else None)
+        branch = self.branch
+        if branch is not None and (not isinstance(branch, str) or not _BRANCH.fullmatch(branch) or ".." in branch or branch.startswith(("/", "-"))):
+            raise ValueError("branch is invalid")
+        object.__setattr__(self, "branch", branch)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "repository_path": self.repository_path,
@@ -70,9 +87,7 @@ def sanitize_intake(payload: Mapping[str, Any]) -> IntakeRequest:
     constraints_value = payload.get("constraints", ())
     if isinstance(constraints_value, str):
         constraints_value = (constraints_value,)
-    if not isinstance(constraints_value, (list, tuple)) or len(constraints_value) > MAX_CONSTRAINTS:
-        raise ValueError("constraints must be a bounded list of text")
-    constraints = tuple(_text(value, "constraint", required=True) for value in constraints_value)
+    constraints = _constraints(constraints_value)
     issue_url = _reference_url(payload.get("issue_url"), "issue_url", "/issues/")
     pr_url = _reference_url(payload.get("pr_url"), "pr_url", "/pull/")
     commit_sha = payload.get("commit_sha")
@@ -86,13 +101,21 @@ def sanitize_intake(payload: Mapping[str, Any]) -> IntakeRequest:
     return IntakeRequest(repository_path, command, failure_text, constraints, issue_url, pr_url, commit_sha, branch)
 
 
+def _constraints(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        value = (value,)
+    if not isinstance(value, (list, tuple)) or len(value) > MAX_CONSTRAINTS:
+        raise ValueError("constraints must be a bounded list of text")
+    return tuple(_text(item, "constraint", required=True) for item in value)
+
+
 def _text(value: Any, label: str, *, required: bool) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{label} must be text")
     if "\x00" in value or len(value) > MAX_INLINE_FIELD:
         raise ValueError(f"{label} is too large or contains a null byte")
     cleaned, _ = redact_text(value.strip())
-    if required and label in {"command", "constraint"} and not cleaned:
+    if required and not cleaned:
         raise ValueError(f"{label} is required")
     return cleaned
 
