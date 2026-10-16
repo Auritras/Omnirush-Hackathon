@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from proofix.models import EventRecord, RunRecord
 from proofix.reports import render_json, render_markdown, write_report
 
 
@@ -96,6 +97,53 @@ class ReportTests(unittest.TestCase):
         self.assertLessEqual(len(payload["evidence"][0]["details"]["stdout"]), 1024)
         self.assertTrue(payload["redactions"])
         self.assertIn("artifacts/stdout.log", encoded)
+
+    def test_embedded_credentials_are_redacted_in_duplicated_run_and_events(self):
+        run = dict(self.run)
+        run["input"] = {"failure_text": "context password=supersecret"}
+        run["evidence"] = [{"kind": "log", "summary": "prefix TOKEN=supersecret", "details": {"copy": "password=supersecret"}}]
+        events = [{"kind": "command_result", "details": {"mode": "recorded/demo", "copy": "TOKEN=supersecret"}, "stderr": "password=supersecret"}]
+        markdown = render_markdown(run, events, {})
+        encoded = render_json(run, events)
+        for secret in ("supersecret",):
+            self.assertNotIn(secret, markdown)
+            self.assertNotIn(secret, encoded)
+        self.assertIn("context password=[REDACTED]", markdown)
+        self.assertIn("prefix TOKEN=[REDACTED]", encoded)
+
+    def test_recorded_provenance_uses_persisted_event_details_and_real_records(self):
+        run = RunRecord.new({"repository_path": "repo", "command": "python -m unittest", "failure_text": "failure"})
+        event = EventRecord.new(run.run_id, "orchestrator:diagnosis_started", details={"mode": "recorded/demo"})
+        markdown = render_markdown(run, [event], {})
+        self.assertIn("recorded/demo", markdown)
+        self.assertNotIn("live OmniRush", markdown)
+
+    def test_write_report_json_directory_and_artifact_summary(self):
+        event = dict(self.events[0])
+        event["details"] = {
+            "result": {
+                "command": ["python", "-m", "unittest"],
+                "exit_code": 1,
+                "duration_ms": 19,
+                "stdout": "bounded useful summary",
+                "stdout_artifact_ref": "artifacts/runner.stdout.log",
+                "stderr_artifact_ref": "artifacts/runner.stderr.log",
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "run-report-1"
+            root.mkdir()
+            (root / "snapshot.json").write_text(json.dumps(self.run), encoding="utf-8")
+            (root / "events.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+            destination = Path(directory) / "exports"
+            output = write_report(str(root), destination, "json")
+            self.assertEqual(output, destination / "run-report-1.json")
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            command = next(item for item in payload["commands"] if item.get("source") == "command_result")
+            self.assertEqual(command["stdout_ref"], "artifacts/runner.stdout.log")
+            self.assertEqual(command["stderr_ref"], "artifacts/runner.stderr.log")
+            self.assertEqual(command["duration_ms"], 19)
+            self.assertIn("bounded useful summary", json.dumps(payload))
 
     def test_unverified_exports_are_explicit_and_write_report_supports_snapshot_path(self):
         run = dict(self.run)

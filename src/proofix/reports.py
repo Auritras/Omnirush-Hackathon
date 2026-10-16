@@ -43,11 +43,15 @@ def render_markdown(run: Any, events: Sequence[Any], artifacts: Mapping[str, Any
     ]
     snapshot = payload["repository_snapshot"]
     if snapshot:
-        for key in ("path", "remote", "branch", "commit", "commit_sha"):
+        for key in ("path", "repository", "remote", "branch", "commit", "commit_sha", "snapshot_mode", "materialization"):
             if snapshot.get(key) not in (None, ""):
                 lines.append(f"- **{key.replace('_', ' ').title()}:** `{_md(snapshot[key])}`")
     else:
         lines.append("- Snapshot unavailable.")
+
+    intake = payload.get("input", {})
+    if isinstance(intake, Mapping) and intake.get("failure_text"):
+        lines.extend(["", "## Intake failure summary", "", f"- {_md(intake['failure_text'])}"])
 
     lines.extend(["", "## Commands and events", ""])
     if payload["commands"]:
@@ -238,6 +242,11 @@ def _repository_snapshot(run: Mapping[str, Any]) -> dict[str, Any]:
     candidate = run.get("repository") or run.get("repository_snapshot") or run.get("snapshot")
     if isinstance(candidate, Mapping):
         return dict(candidate)
+    for evidence in _list(run.get("evidence")):
+        if isinstance(evidence, Mapping) and evidence.get("kind") == "repository_snapshot":
+            details = evidence.get("details")
+            if isinstance(details, Mapping):
+                return dict(details)
     intake = run.get("input", run.get("intake", {}))
     if not isinstance(intake, Mapping):
         return {}
@@ -256,20 +265,33 @@ def _commands(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]], verif
         nested = details.get("result") if isinstance(details.get("result"), Mapping) else {}
         command = command or nested.get("command")
         if command:
+            artifact_refs = nested.get("artifact_refs") if isinstance(nested.get("artifact_refs"), Mapping) else {}
+            stdout_ref = _first_value(event, nested, "stdout_ref", "stdout_artifact_ref") or artifact_refs.get("stdout")
+            stderr_ref = _first_value(event, nested, "stderr_ref", "stderr_artifact_ref") or artifact_refs.get("stderr")
             result.append({
                 "command": command,
-                "exit_code": event.get("exit_code", nested.get("exit_code")),
-                "duration_ms": event.get("duration_ms", details.get("duration_ms", nested.get("duration_ms"))),
-                "stdout_ref": event.get("stdout_ref", nested.get("stdout_ref")),
-                "stderr_ref": event.get("stderr_ref", nested.get("stderr_ref")),
-                "command_ref": event.get("command_ref", nested.get("command_ref")),
+                "exit_code": _first_value(event, nested, "exit_code") if _first_value(event, nested, "exit_code") is not None else None,
+                "duration_ms": _first_value(event, details, "duration_ms") if _first_value(event, details, "duration_ms") is not None else nested.get("duration_ms"),
+                "stdout_ref": stdout_ref,
+                "stderr_ref": stderr_ref,
+                "command_ref": _first_value(event, nested, "command_ref"),
+                "stdout_summary": nested.get("stdout", details.get("stdout")),
+                "stderr_summary": nested.get("stderr", details.get("stderr")),
                 "source": event.get("kind", "event"),
             })
     if isinstance(verification, Mapping):
         for check in _list(verification.get("checks")):
             if isinstance(check, Mapping) and check.get("command"):
-                result.append({key: check[key] for key in ("command", "exit_code", "duration_ms", "stdout_ref", "stderr_ref", "command_ref", "name", "status") if key in check})
+                result.append({key: check[key] for key in ("command", "exit_code", "duration_ms", "stdout_ref", "stderr_ref", "stdout_artifact_ref", "stderr_artifact_ref", "command_ref", "name", "status", "details") if key in check})
     return result
+
+
+def _first_value(first: Mapping[str, Any], second: Mapping[str, Any], *keys: str) -> Any:
+    for mapping in (first, second):
+        for key in keys:
+            if mapping.get(key) is not None:
+                return mapping[key]
+    return None
 
 
 def _approvals(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -307,7 +329,14 @@ def _artifacts(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]], supp
         if isinstance(value, Mapping):
             for key, nested in value.items():
                 if str(key).endswith("_ref") and isinstance(nested, str) and nested:
-                    refs.setdefault(nested, "")
+                    summary_key = str(key).replace("_artifact_ref", "").replace("_ref", "")
+                    summary = value.get(summary_key) or value.get(f"{summary_key}_summary") or ""
+                    refs.setdefault(nested, str(summary))
+                elif str(key) == "artifact_refs" and isinstance(nested, Mapping):
+                    for stream, ref in nested.items():
+                        if isinstance(ref, str) and ref:
+                            summary = value.get(stream) or value.get(f"{stream}_summary") or ""
+                            refs.setdefault(ref, str(summary))
                 scan(nested)
         elif isinstance(value, (list, tuple)):
             for item in value:
@@ -317,19 +346,30 @@ def _artifacts(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]], supp
     for ref, content in supplied.items():
         if not isinstance(ref, str):
             continue
-        # The caller may have passed a full log body. Keep it out of the report;
-        # the relative reference is the audit handle and the artifact store is
-        # responsible for retaining the complete redacted content.
-        summary = "artifact body omitted; see the referenced artifact"
-        if content:
-            notices.append(f"artifact body omitted for {ref}")
-        refs[ref] = summary
-    return [{"ref": ref, "summary": summary[:256]} for ref, summary in sorted(refs.items())]
+        summary, findings = redact_text(str(content) if content is not None else "")
+        notices.extend(f"{finding} redacted in artifact summary {ref}" for finding in findings)
+        if len(summary) > 256:
+            notices.append(f"artifact summary bounded for {ref}")
+            summary = summary[:220] + "\n[summary bounded; see artifact reference]"
+        refs[ref] = summary or "artifact has no inline summary; see the referenced artifact"
+    cleaned_refs: list[dict[str, str]] = []
+    for ref, summary in sorted(refs.items()):
+        cleaned, findings = redact_text(summary)
+        notices.extend(f"{finding} redacted in artifact summary {ref}" for finding in findings)
+        if len(cleaned) > 256:
+            notices.append(f"artifact summary bounded for {ref}")
+            cleaned = cleaned[:220] + "\n[summary bounded; see artifact reference]"
+        cleaned_refs.append({"ref": ref, "summary": cleaned})
+    return cleaned_refs
 
 
 def _result_label(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]]) -> str:
     values = [run.get("mode"), run.get("result_label"), run.get("provenance")]
-    values.extend(event.get("mode") for event in events)
+    for event in events:
+        values.append(event.get("mode"))
+        details = event.get("details")
+        if isinstance(details, Mapping):
+            values.extend((details.get("mode"), details.get("provenance"), details.get("result_label")))
     if any(isinstance(value, str) and ("recorded" in value.casefold() or "demo" in value.casefold()) for value in values):
         return "recorded/demo"
     return "live OmniRush"

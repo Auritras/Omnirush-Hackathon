@@ -9,6 +9,7 @@ from proofix.models import DomainError, EventRecord
 from proofix.omnirush import RecordedSessionClient, run_specialists
 from proofix.orchestrator import ProofFixOrchestrator
 from proofix.runner import CommandPolicy, run_command
+from proofix.reports import render_json
 from proofix.verification import VerificationPlan
 from proofix.schemas import SchemaError
 from proofix.state import transition
@@ -54,6 +55,23 @@ class OrchestratorTests(unittest.TestCase):
             events = orchestrator.store.list_events(run_id)
             self.assertTrue(any(event.status == "reproduced" for event in events))
             self.assertTrue(all(hypothesis.get("role") for hypothesis in diagnosed.hypotheses))
+
+            reproduction = next(event for event in events if event.kind == "orchestrator:reproduction_result")
+            result = reproduction.details["result"]
+            self.assertEqual(result["exit_code"], 2)
+            self.assertGreaterEqual(result["duration_ms"], 0)
+            self.assertTrue(result["stdout_artifact_ref"])
+            self.assertTrue(result["stderr_artifact_ref"])
+            self.assertIn("repository_snapshot", reproduction.details)
+            self.assertEqual(reproduction.details["repository_snapshot"]["commit"], request.commit_sha)
+            persisted = orchestrator.store.get_run(run_id)
+            self.assertTrue(any(item.get("kind") == "repository_snapshot" for item in persisted.evidence))
+            restarted_run = RunStore(root / "runs").get_run(run_id)
+            restarted_events = RunStore(root / "runs").list_events(run_id)
+            report = json.loads(render_json(restarted_run, restarted_events))
+            self.assertEqual(report["repository_snapshot"]["commit"], request.commit_sha)
+            self.assertIn("stdout_artifact_ref", json.dumps(report))
+            self.assertEqual(report["result_label"], "recorded/demo")
 
     def test_successful_or_different_failure_stops_with_evidence_without_diagnosis(self):
         for source, failure in (("print('all good')\n", "expected failure"), ("import sys\nprint('other')\nsys.exit(1)\n", "expected failure")):

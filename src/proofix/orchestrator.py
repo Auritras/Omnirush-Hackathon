@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import subprocess
 from typing import Any, Mapping
 
 from .intake import IntakeRequest, sanitize_intake
 from .models import DomainError, EventRecord, PatchProposal, RunRecord
 from .omnirush import OmniRushSessionClient, RecordedSessionClient, run_specialists
+from .redaction import redact_text
 from .redaction import redact_text
 from .reproduction import compare_failure
 from .runner import CommandPolicy, run_command
@@ -52,12 +54,24 @@ class ProofFixOrchestrator:
             assessment = compare_failure(intake.failure_text, result)
             status = assessment.status.value
             result_data = result.to_dict() if hasattr(result, "to_dict") else _result_dict(result)
+            artifact_refs = result_data.get("artifact_refs") if isinstance(result_data.get("artifact_refs"), Mapping) else {}
+            for stream in ("stdout", "stderr"):
+                ref = result_data.get(f"{stream}_artifact_ref") or result_data.get(f"{stream}_ref") or artifact_refs.get(stream)
+                if ref:
+                    result_data.setdefault(f"{stream}_artifact_ref", ref)
+            snapshot_metadata = _snapshot_metadata(snapshot, intake)
             details = {
                 "stage": "reproduction",
                 "outcome": status,
                 "reason": assessment.reason,
                 "expected_exit_code": assessment.expected_exit_code,
                 "actual_exit_code": assessment.actual_exit_code,
+                "command": result_data.get("command", intake.command),
+                "exit_code": result_data.get("exit_code"),
+                "duration_ms": result_data.get("duration_ms"),
+                "stdout_ref": result_data.get("stdout_artifact_ref") or result_data.get("stdout_ref"),
+                "stderr_ref": result_data.get("stderr_artifact_ref") or result_data.get("stderr_ref"),
+                "repository_snapshot": snapshot_metadata,
                 "result": _without_transition_fields(result_data),
             }
             evidence = {
@@ -74,7 +88,15 @@ class ProofFixOrchestrator:
         run = self.store.get_run(run_id)
         self._append_transition(run, target, "orchestrator:reproduction_result", details)
         updated = self.store.get_run(run_id)
-        self.store.update_run(replace(updated, evidence=[*updated.evidence, evidence]))
+        snapshot_evidence = None
+        if isinstance(details.get("repository_snapshot"), Mapping):
+            snapshot_evidence = {
+                "kind": "repository_snapshot",
+                "summary": "Disposable repository snapshot used for reproduction.",
+                "details": dict(details["repository_snapshot"]),
+            }
+        additions = [evidence] + ([snapshot_evidence] if snapshot_evidence else [])
+        self.store.update_run(replace(updated, evidence=[*updated.evidence, *additions]))
         return self.store.get_run(run_id)
 
     def advance_diagnosis(self, run_id: str) -> RunRecord:
@@ -274,14 +296,26 @@ class ProofFixOrchestrator:
 
     def _append_transition(self, run: RunRecord, target: str, kind: str, details: Mapping[str, Any]) -> None:
         updated = transition(run, target, event_kind=kind, details=details)
+        result = details.get("result") if isinstance(details.get("result"), Mapping) else {}
+        command = details.get("command", result.get("command"))
+        if isinstance(command, (list, tuple)):
+            command = " ".join(str(item) for item in command)
+        exit_code = details.get("exit_code", result.get("exit_code"))
+        duration_ms = details.get("duration_ms", result.get("duration_ms"))
+        stdout_ref = details.get("stdout_ref", result.get("stdout_artifact_ref", result.get("stdout_ref")))
+        stderr_ref = details.get("stderr_ref", result.get("stderr_artifact_ref", result.get("stderr_ref")))
         event = EventRecord.new(
             run_id=run.run_id,
             kind=kind,
             stage=str(details.get("stage")) if details.get("stage") else None,
             status=str(details.get("outcome")) if details.get("outcome") else None,
+            command=command if isinstance(command, str) else None,
+            exit_code=exit_code if isinstance(exit_code, int) and not isinstance(exit_code, bool) else None,
+            stdout_ref=stdout_ref if isinstance(stdout_ref, str) else None,
+            stderr_ref=stderr_ref if isinstance(stderr_ref, str) else None,
             state_before=run.state,
             state_after=updated.state,
-            details=dict(details),
+            details={**dict(details), **({"duration_ms": duration_ms} if duration_ms is not None else {})},
         )
         self.store.append_event(event)
 
@@ -313,6 +347,35 @@ def _result_dict(result: Any) -> dict[str, Any]:
         "blocked": bool(getattr(result, "blocked", False)),
         "blocked_reason": getattr(result, "blocked_reason", None),
     }
+
+
+def _snapshot_metadata(snapshot: Any, intake: IntakeRequest) -> dict[str, Any]:
+    """Return portable snapshot provenance for persistence and report export."""
+    metadata = snapshot.to_dict() if hasattr(snapshot, "to_dict") else {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    repository = getattr(snapshot, "repository", None)
+    if repository is not None:
+        repository_path = Path(repository)
+        metadata.setdefault("repository", repository_path.name)
+        metadata["branch"] = intake.branch or _git_metadata(repository_path, "branch", "--show-current")
+        remote = _git_metadata(repository_path, "remote", "get-url", "origin")
+        metadata["remote"] = redact_text(remote)[0] if remote else None
+    metadata.setdefault("commit", getattr(snapshot, "commit", None))
+    metadata.setdefault("snapshot_mode", getattr(snapshot, "snapshot_mode", getattr(snapshot, "mode", None)))
+    metadata.setdefault("materialization", getattr(snapshot, "materialization", None))
+    return metadata
+
+
+def _git_metadata(repository: Path, *args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *args], cwd=repository, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False
+        )
+    except OSError:
+        return None
+    value = result.stdout.strip()
+    return value or None
 
 
 def _without_transition_fields(value: Any) -> Any:
