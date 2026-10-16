@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+import shutil
+import subprocess
 import ipaddress
 import json
 from pathlib import Path
@@ -25,6 +28,7 @@ from .worktree import WorkspaceManager
 
 MAX_REQUEST_BODY = 1_048_576
 MAX_ARTIFACT_BYTES = 4 * 1024 * 1024
+MAX_VERIFICATION_TIMEOUT_SECONDS = 300.0
 WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
 STATIC_ASSETS = {
     "index.html": "text/html; charset=utf-8",
@@ -82,8 +86,9 @@ class ProofFixHTTPServer(ThreadingHTTPServer):
         self.config = config
         self.store = RunStore(config.data_root)
         self.workspace_manager = WorkspaceManager(config.data_root / "workspace-root")
+        self.demo_repository = _materialize_demo_fixture(config.data_root) if config.demo else None
         if config.demo:
-            session_client = RecordedSessionClient(_default_recorded_fixture())
+            session_client = RecordedSessionClient(config.recorded_fixture or _default_recorded_fixture())
         elif config.session_client is not None:
             session_client = config.session_client
         else:
@@ -92,6 +97,19 @@ class ProofFixHTTPServer(ThreadingHTTPServer):
         metadata = {"mode": "recorded/demo", "provenance": "recorded/demo"} if config.demo else None
         self.orchestrator = ProofFixOrchestrator(self.store, self.workspace_manager, config.runner, session_client, metadata)
         super().__init__(address, _make_handler())
+
+
+    def shutdown(self):
+        try:
+            self.orchestrator.cleanup()
+        finally:
+            return super().shutdown()
+
+    def server_close(self):
+        try:
+            self.orchestrator.cleanup()
+        finally:
+            return super().server_close()
 
 
 def create_server(config: ServerConfig | Mapping[str, Any] | None = None) -> ThreadingHTTPServer:
@@ -177,8 +195,9 @@ def _make_handler():
             except _HTTPError as exc:
                 self._send_error(exc.status, exc.message)
             except DomainError as exc:
-                status = 404 if str(exc).startswith("unknown run") else 409
-                self._send_error(status, str(exc))
+                message = str(exc)
+                status = 404 if message.startswith("unknown run") else 400 if message.startswith(("invalid regression", "an explicit")) else 409
+                self._send_error(status, message)
             except (PathSafetyError, ValueError, TypeError, KeyError) as exc:
                 self._send_error(400, _safe_error(exc))
             except OSError as exc:
@@ -250,7 +269,7 @@ def _make_handler():
             if route == ["runs"] or route == ["intake"]:
                 if self.server.config.demo:
                     data = {
-                        "repository_path": str(_default_fixture_repository()),
+                        "repository_path": str(self.server.demo_repository or _default_fixture_repository()),
                         "command": "python -m unittest discover -s tests -v",
                         "failure_text": "ValueError: too many values to unpack (expected 2)",
                         "constraints": [],
@@ -284,8 +303,16 @@ def _make_handler():
                 result = orchestrator.approve_patch(run_id, _actor(payload), _timestamp(payload), _digest(payload))
             elif action == "reject" or (action == "patch" and subaction == "reject"):
                 result = orchestrator.reject_patch(run_id, _actor(payload), _timestamp(payload), _digest(payload))
+            elif action in {"return-to-diagnosis", "recover", "recovery"}:
+                result = orchestrator.return_to_diagnosis(run_id, _actor(payload), _timestamp(payload))
+            elif action in {"experiment", "run-experiment"}:
+                allowed = {"kind", "command", "hypothesis_id", "hypothesis", "environment", "env_change", "env_name", "env_value", "instrumentation", "parent_commit", "regression_test", "timeout_seconds"}
+                unknown = set(payload).difference(allowed)
+                if unknown:
+                    raise _HTTPError(400, "experiment contains unsupported fields")
+                result = orchestrator.run_experiment(run_id, payload)
             elif action in {"propose", "patch"}:
-                result = orchestrator.propose_patch(run_id, _required_text(payload, "diff"), payload.get("scope"))
+                result = orchestrator.propose_patch(run_id, _required_text(payload, "diff"), _required_text(payload, "regression_test"), payload.get("scope"))
             elif action in {"verify", "verification"}:
                 result = orchestrator.verify_patch(run_id, _verification_plan(payload))
             elif action == "export":
@@ -370,7 +397,7 @@ def _make_handler():
     return Handler
 
 
-class _HTTPError(Exception):
+class _HTTPError(ValueError):
     def __init__(self, status: int, message: str):
         super().__init__(message)
         self.status = status
@@ -431,13 +458,20 @@ def _verification_plan(payload: Mapping[str, Any]) -> VerificationPlan:
     plan = payload.get("plan", payload)
     if not isinstance(plan, Mapping):
         raise _HTTPError(400, "verification plan must be an object")
+    raw_timeout = plan.get("timeout_seconds", 30.0)
+    if isinstance(raw_timeout, bool) or not isinstance(raw_timeout, (int, float)) or not math.isfinite(float(raw_timeout)) or not 0 < float(raw_timeout) <= MAX_VERIFICATION_TIMEOUT_SECONDS:
+        raise _HTTPError(400, "timeout_seconds must be finite, positive, and no greater than 300")
+    relevant = plan.get("relevant_tests", [])
+    scope = plan.get("scope_files", [])
+    if not isinstance(relevant, list) or not isinstance(scope, list):
+        raise _HTTPError(400, "relevant_tests and scope_files must be lists")
     return VerificationPlan(
         original_failure_command=_required_plan_value(plan, "original_failure_command", "original_command"),
         regression_test=_required_plan_value(plan, "regression_test"),
-        relevant_tests=list(plan.get("relevant_tests", [])),
+        relevant_tests=list(relevant),
         broader_suite=plan.get("broader_suite"),
-        timeout_seconds=float(plan.get("timeout_seconds", 30.0)),
-        scope_files=list(plan.get("scope_files", [])),
+        timeout_seconds=float(raw_timeout),
+        scope_files=list(scope),
     )
 
 
@@ -447,6 +481,26 @@ def _required_plan_value(payload: Mapping[str, Any], *keys: str):
             return payload[key]
     raise _HTTPError(400, f"{keys[0]} is required")
 
+
+def _materialize_demo_fixture(data_root: Path) -> Path:
+    """Create an isolated, committed demo repository inside controlled run data."""
+    source = _default_fixture_repository()
+    destination = data_root / "demo-fixture"
+    try:
+        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=destination, text=True, stderr=subprocess.PIPE).strip()
+        if head:
+            return destination
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination, ignore=shutil.ignore_patterns(".git", ".proofix-artifacts", "__pycache__"))
+    subprocess.run(["git", "init", "-q"], cwd=destination, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(["git", "config", "user.email", "proofix-demo@example.test"], cwd=destination, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(["git", "config", "user.name", "ProofFix Demo"], cwd=destination, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(["git", "add", "."], cwd=destination, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(["git", "commit", "-qm", "ProofFix demo fixture baseline"], cwd=destination, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return destination
 
 def _default_fixture_repository() -> Path:
     return Path(__file__).resolve().parents[2] / "fixtures" / "broken-parser-repo"

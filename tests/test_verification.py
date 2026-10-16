@@ -28,7 +28,7 @@ class VerificationTests(unittest.TestCase):
             root = Path(directory)
             repo = self._repo(root, "print('bad')\n")
             diff = """diff --git a/case.py b/case.py\n--- a/case.py\n+++ b/case.py\n@@ -1 +1 @@\n-print('bad')\n+print('good')\n"""
-            proposal = validate_unified_diff(diff, repo)
+            proposal = validate_unified_diff(diff, repo, regression_test="python -m unittest tests.test_parser", original_command="python case.py")
             summary = verify_patch(proposal, repo, run_command, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"), run_id="run-verify")
             self.assertEqual(summary.status, "verification_blocked")
             self.assertEqual((repo / "case.py").read_text(), "print('bad')\n")
@@ -38,7 +38,7 @@ class VerificationTests(unittest.TestCase):
             root = Path(directory)
             repo = self._repo(root, "import sys; sys.exit(1)\n")
             diff = """diff --git a/case.py b/case.py\n--- a/case.py\n+++ b/case.py\n@@ -1 +1 @@\n-import sys; sys.exit(1)\n+print('fixed')\n"""
-            proposal = validate_unified_diff(diff, repo)
+            proposal = validate_unified_diff(diff, repo, regression_test="python -m unittest tests.test_parser", original_command="python case.py")
             approve_patch("run-verify", proposal.digest, "alice", "2026-10-15T00:00:00Z", proposal=proposal, current_digest=proposal.digest)
             plan = VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case", relevant_tests=["python -m unittest tests.test_case"], broader_suite="python -m unittest tests.test_case")
             summary = verify_patch(proposal, repo, run_command, plan, run_id="run-verify")
@@ -50,7 +50,7 @@ class VerificationTests(unittest.TestCase):
             root = Path(directory)
             repo = self._repo(root, "import sys; sys.exit(1)\n")
             diff = """diff --git a/case.py b/case.py\n--- a/case.py\n+++ b/case.py\n@@ -1 +1 @@\n-import sys; sys.exit(1)\n+print('fixed')\n"""
-            proposal = validate_unified_diff(diff, repo)
+            proposal = validate_unified_diff(diff, repo, regression_test="python -m unittest tests.test_parser", original_command="python case.py")
             approve_patch("run-fail", proposal.digest, "alice", "2026-10-15T00:00:00Z", proposal=proposal, current_digest=proposal.digest)
             plan = VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.missing_module")
             summary = verify_patch(proposal, repo, run_command, plan, run_id="run-fail")
@@ -73,7 +73,7 @@ class VerificationTests(unittest.TestCase):
             root = Path(directory)
             repo = self._repo(root, "import sys; sys.exit(1)\n")
             diff = """diff --git a/case.py b/case.py\n--- a/case.py\n+++ b/case.py\n@@ -1 +1 @@\n-import sys; sys.exit(1)\n+print('fixed')\n"""
-            proposal = validate_unified_diff(diff, repo)
+            proposal = validate_unified_diff(diff, repo, regression_test="python -m unittest tests.test_parser", original_command="python case.py")
             approve_patch("run-exception", proposal.digest, "alice", "2026-10-15T00:00:00Z", proposal=proposal, current_digest=proposal.digest)
             def exploding_runner(*_args, **_kwargs):
                 raise OSError("runner unavailable")
@@ -86,7 +86,7 @@ class VerificationTests(unittest.TestCase):
             root = Path(directory)
             repo = self._repo(root, "print('bad')\n")
             diff = """diff --git a/case.py b/case.py\n--- a/case.py\n+++ b/case.py\n@@ -1 +1 @@\n-print('bad')\n+print('good')\n"""
-            proposal = validate_unified_diff(diff, repo)
+            proposal = validate_unified_diff(diff, repo, regression_test="python -m unittest tests.test_parser", original_command="python case.py")
             approve_patch("run-tamper", proposal.digest, "alice", "2026-10-15T00:00:00Z", proposal=proposal, current_digest=proposal.digest)
             proposal.diff = diff.replace("print('good')", "print('tampered')")
             summary = verify_patch(proposal, repo, run_command, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"), run_id="run-tamper")
@@ -97,7 +97,7 @@ class VerificationTests(unittest.TestCase):
             root = Path(directory)
             repo = self._repo(root, "print('bad')\n")
             diff = """diff --git a/case.py b/case.py\n--- a/case.py\n+++ b/case.py\n@@ -1 +1 @@\n-print('bad')\n+print('good')\n"""
-            proposal = validate_unified_diff(diff, repo)
+            proposal = validate_unified_diff(diff, repo, regression_test="python -m unittest tests.test_parser", original_command="python case.py")
             approve_patch("run-scope", proposal.digest, "alice", "2026-10-15T00:00:00Z", proposal=proposal, current_digest=proposal.digest)
             proposal.files = []
             summary = verify_patch(proposal, repo, run_command, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"), run_id="run-scope")

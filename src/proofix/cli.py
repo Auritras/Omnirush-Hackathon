@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import re
 
@@ -63,14 +64,14 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("run_id")
     export.add_argument("destination")
     export.add_argument("--format", choices=("markdown", "md", "json"), default="markdown")
-    export.add_argument("--data-root", default=".proofix")
+    export.add_argument("--data-root", default=os.environ.get("PROOFIX_DATA_ROOT", ".proofix-data"))
     return parser
 
 
 def _server_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--data-root", default=".proofix")
+    parser.add_argument("--host", default=os.environ.get("PROOFIX_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PROOFIX_PORT", "8000")))
+    parser.add_argument("--data-root", default=os.environ.get("PROOFIX_DATA_ROOT", ".proofix-data"))
     parser.add_argument("--repository")
     parser.add_argument("--recorded-fixture")
 

@@ -121,7 +121,7 @@ class ExperimentResult:
         }
 
 
-def run_experiment(spec: ExperimentSpec, workspace: os.PathLike[str] | str, runner: Any = run_command) -> ExperimentResult:
+def run_experiment(spec: ExperimentSpec, workspace: os.PathLike[str] | str, runner: Any = run_command, run_root: os.PathLike[str] | str | None = None) -> ExperimentResult:
     """Run one supported experiment below ``workspace`` and record evidence."""
 
     if not isinstance(spec, ExperimentSpec):
@@ -173,7 +173,7 @@ def run_experiment(spec: ExperimentSpec, workspace: os.PathLike[str] | str, runn
     artifacts = dict(getattr(result, "artifact_refs", getattr(result, "artifacts", {})) or {})
     parent_result = None
     if kind == "parent_commit_comparison":
-        parent_result = _run_against_parent(spec.parent_commit or "", command, root, runner, spec.timeout_seconds)
+        parent_result = _run_against_parent(spec.parent_commit or "", command, root, runner, spec.timeout_seconds, run_root=run_root)
     comparison = {}
     if parent_result is not None:
         comparison = {
@@ -238,7 +238,10 @@ def validate_guarded_command(command: str | Sequence[str], workspace: os.PathLik
                 raise ValueError("Python module target is missing")
             module = args[index + 1]
             target_modules = args[index + 2:] if module == "unittest" else [module]
-            allowed_module = module.startswith(("tests.", "test.")) or (module == "unittest" and bool(target_modules) and all(item.startswith(("tests.", "test.")) for item in target_modules))
+            named_tests = module.startswith(("tests.", "test."))
+            unittest_modules = module == "unittest" and bool(target_modules) and all(item.startswith(("tests.", "test.")) for item in target_modules)
+            discover_args = module == "unittest" and target_modules and target_modules[0] == "discover" and set(target_modules[1:]).issubset({"-s", "tests", "-v", "-q"}) and "-s" in target_modules and "tests" in target_modules
+            allowed_module = named_tests or unittest_modules or discover_args
             if kind == "dependency_runtime_inspection" and args == ["-m", "pip", "--version"]:
                 allowed_module = True
             if not allowed_module or any("/" in item or "\\" in item for item in target_modules):
@@ -302,10 +305,12 @@ def _invoke_runner(runner: Any, command: list[str], workspace: Path, timeout: fl
             return target(command, workspace)
 
 
-def _run_against_parent(parent_commit: str, command: list[str], workspace: Path, runner: Any, timeout: float) -> Any:
+def _run_against_parent(parent_commit: str, command: list[str], workspace: Path, runner: Any, timeout: float, *, run_root: os.PathLike[str] | str | None = None) -> Any:
     try:
         subprocess.run(["git", "rev-parse", "--verify", f"{parent_commit}^{{commit}}"], cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
-        with tempfile.TemporaryDirectory(prefix="proofix-parent-") as directory:
+        controlled_root = Path(run_root).expanduser().resolve(strict=False) if run_root is not None else workspace / ".proofix-experiments"
+        controlled_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="parent-", dir=str(controlled_root)) as directory:
             parent_root = Path(directory) / "workspace"
             archive = subprocess.run(["git", "archive", "--format=tar", parent_commit], cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             parent_root.mkdir()

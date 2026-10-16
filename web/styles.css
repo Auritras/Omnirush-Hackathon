@@ -210,3 +210,8 @@ pre { margin: 0; min-height: 132px; max-height: 220px; overflow: auto; padding: 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+.proposal-form, .experiment-form { display: grid; gap: 10px; margin-top: 16px; }
+.proposal-form label, .experiment-form label { display: grid; gap: 7px; color: var(--faint); font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.proposal-form input, .proposal-form textarea, .experiment-form input, .experiment-form select { width: 100%; border: 1px solid var(--line); border-radius: 5px; padding: 9px 10px; background: var(--ink-raised); color: var(--paper); font: 11px var(--mono); }
+.proposal-form textarea { min-height: 130px; resize: vertical; }

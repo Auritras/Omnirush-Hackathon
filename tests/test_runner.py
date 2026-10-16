@@ -44,6 +44,16 @@ def _assert_pid_gone(test_case: unittest.TestCase, pid_file: Path) -> None:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_python_investigation_uses_runtime_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "tests").mkdir()
+            (workspace / "tests" / "__init__.py").write_text("", encoding="utf-8")
+            (workspace / "tests" / "test_path.py").write_text("import unittest\nclass PathTest(unittest.TestCase):\n    def test_runtime(self): self.assertTrue(True)\n", encoding="utf-8")
+            result = run_command("python -m unittest tests.test_path", workspace, policy=CommandPolicy(workspace_root=workspace, artifact_dir=workspace / "artifacts"))
+            self.assertFalse(result.blocked, result.blocked_reason)
+            self.assertEqual(result.exit_code, 0)
+
     def test_allowlisted_command_runs_in_the_workspace(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

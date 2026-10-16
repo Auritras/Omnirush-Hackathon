@@ -17,9 +17,18 @@ index 1234567..89abcde 100644
 
 
 class PatchTests(unittest.TestCase):
+    def test_patch_proposal_requires_explicit_distinct_regression_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for kwargs in ({}, {"regression_test": "", "original_command": "python case.py"}, {"regression_test": "python case.py", "original_command": "python case.py"}):
+                with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                    validate_unified_diff(GOOD_DIFF, root, **kwargs)
+            proposal = validate_unified_diff(GOOD_DIFF, root, regression_test="python -m unittest tests.test_parser", original_command="python case.py")
+            self.assertEqual(proposal.regression_test, "python -m unittest tests.test_parser")
+
     def test_valid_diff_has_digest_and_files(self):
         with tempfile.TemporaryDirectory() as directory:
-            proposal = validate_unified_diff(GOOD_DIFF, Path(directory))
+            proposal = validate_unified_diff(GOOD_DIFF, Path(directory), regression_test="python -m unittest tests.test_parser", original_command="python case.py")
             self.assertTrue(proposal.digest.startswith("sha256:"))
             self.assertEqual(proposal.files, ["case.py"])
             self.assertEqual(proposal.diff, GOOD_DIFF)
@@ -28,12 +37,12 @@ class PatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             quoted = '''diff --git "a/space name.txt" "b/space name.txt"\nindex 1111111..2222222 100644\n--- "a/space name.txt"\n+++ "b/space name.txt"\n@@ -1 +1 @@\n-old\n+new\n'''
-            proposal = validate_unified_diff(quoted, root)
+            proposal = validate_unified_diff(quoted, root, regression_test="python -m unittest tests.test_parser", original_command="python case.py")
             self.assertEqual(proposal.files, ["space name.txt"])
             rename = '''diff --git "a/old name.txt" "b/new name.txt"\nsimilarity index 100%\nrename from old name.txt\nrename to new name.txt\n'''
-            self.assertEqual(validate_unified_diff(rename, root).files, ["new name.txt"])
+            self.assertEqual(validate_unified_diff(rename, root, regression_test="python -m unittest tests.test_parser", original_command="python case.py").files, ["new name.txt"])
             mode = "diff --git a/script.sh b/script.sh\nold mode 100644\nnew mode 100755\n"
-            self.assertEqual(validate_unified_diff(mode, root).files, ["script.sh"])
+            self.assertEqual(validate_unified_diff(mode, root, regression_test="python -m unittest tests.test_parser", original_command="python case.py").files, ["script.sh"])
 
     def test_real_git_unquoted_space_rename_diff_is_parsed_from_file_headers(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -49,7 +58,7 @@ class PatchTests(unittest.TestCase):
             # Use Git's rename form, which is unquoted for this fixture.
             diff = subprocess.check_output(["git", "diff", "--cached", "--no-ext-diff", "--no-color"], cwd=repo, text=True)
             self.assertIn("diff --git a/old name.txt b/new b/file.txt", diff)
-            self.assertEqual(validate_unified_diff(diff, repo).files, ["new b/file.txt"])
+            self.assertEqual(validate_unified_diff(diff, repo, regression_test="python -m unittest tests.test_parser", original_command="python case.py").files, ["new b/file.txt"])
 
     def test_real_git_unquoted_space_new_file_uses_non_dev_null_header(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -64,7 +73,7 @@ class PatchTests(unittest.TestCase):
             diff = subprocess.check_output(["git", "diff", "--cached", "--no-ext-diff", "--no-color"], cwd=repo, text=True)
             self.assertIn("--- /dev/null", diff)
             self.assertIn("+++ b/new b/file.txt", diff)
-            self.assertEqual(validate_unified_diff(diff, repo).files, ["new b/file.txt"])
+            self.assertEqual(validate_unified_diff(diff, repo, regression_test="python -m unittest tests.test_parser", original_command="python case.py").files, ["new b/file.txt"])
 
     def test_malformed_absolute_traversal_and_scope_diffs_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -75,11 +84,11 @@ class PatchTests(unittest.TestCase):
             out_of_scope = GOOD_DIFF.replace("case.py", ".git/config")
             for diff in (malformed, absolute, traversal, out_of_scope):
                 with self.subTest(diff=diff), self.assertRaises(ValueError):
-                    validate_unified_diff(diff, root)
+                    validate_unified_diff(diff, root, regression_test="python -m unittest tests.test_parser", original_command="python case.py")
 
     def test_approval_requires_matching_digest_state_actor_and_time(self):
         with tempfile.TemporaryDirectory() as directory:
-            proposal = validate_unified_diff(GOOD_DIFF, Path(directory))
+            proposal = validate_unified_diff(GOOD_DIFF, Path(directory), regression_test="python -m unittest tests.test_parser", original_command="python case.py")
             with self.assertRaises(ValueError):
                 approve_patch("run-patch", "sha256:wrong", "alice", "2026-10-15T00:00:00Z")
             with self.assertRaises(ValueError):
@@ -101,15 +110,15 @@ class PatchTests(unittest.TestCase):
     def test_approval_rejects_a_digest_from_another_run_proposal(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            first = validate_unified_diff(GOOD_DIFF, root)
-            second = validate_unified_diff(GOOD_DIFF.replace("print('good')", "print('other')"), root)
+            first = validate_unified_diff(GOOD_DIFF, root, regression_test="python -m unittest tests.test_parser", original_command="python case.py")
+            second = validate_unified_diff(GOOD_DIFF.replace("print('good')", "print('other')"), root, regression_test="python -m unittest tests.test_parser", original_command="python case.py")
             approve_patch("run-one", first.digest, "alice", "2026-10-15T00:00:00Z", proposal=first, current_digest=first.digest)
             with self.assertRaises(ValueError):
                 approve_patch("run-two", first.digest, "alice", "2026-10-15T00:00:01Z", proposal=second, current_digest=second.digest)
 
     def test_rejection_is_recorded_without_applying_anything(self):
         with tempfile.TemporaryDirectory() as directory:
-            proposal = validate_unified_diff(GOOD_DIFF, Path(directory))
+            proposal = validate_unified_diff(GOOD_DIFF, Path(directory), regression_test="python -m unittest tests.test_parser", original_command="python case.py")
             rejection = reject_patch("run-reject", "alice", "2026-10-15T00:00:00Z", digest=proposal.digest, proposal=proposal, current_digest=proposal.digest)
             self.assertEqual(rejection.action, "rejected")
             self.assertFalse((Path(directory) / "case.py").exists())

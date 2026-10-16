@@ -183,6 +183,20 @@ class WorkspaceSafetyTests(unittest.TestCase):
                 manager.cleanup(snapshot)
             self.assertFalse(snapshot.path.exists())
 
+    def test_cleanup_all_removes_every_live_snapshot_and_git_registration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = self._make_repository(root)
+            manager = WorkspaceManager(root / "run")
+            first = manager.snapshot_repository(repository)
+            second = manager.snapshot_repository(repository)
+            manager.cleanup_all()
+            self.assertFalse(first.path.exists())
+            self.assertFalse(second.path.exists())
+            registrations = self._git(repository, "worktree", "list", "--porcelain")
+            self.assertNotIn(str(first.path), registrations)
+            self.assertNotIn(str(second.path), registrations)
+
     def test_dirty_inclusion_is_explicit_and_cleanup_cannot_remove_outside_path(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

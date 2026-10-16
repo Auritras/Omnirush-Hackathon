@@ -36,6 +36,10 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn('id="claim-evidence"', html)
         self.assertIn('href="/styles.css"', html)
         self.assertIn('src="/app.js"', html)
+        self.assertIn('id="experiment-button"', html)
+        self.assertIn('id="propose-button"', html)
+        self.assertIn('id="regression-input"', html)
+        self.assertIn('id="recovery-button"', html)
 
     def test_frontend_contract_has_safe_rendering_and_api_actions(self):
         js = (WEB / "app.js").read_text(encoding="utf-8")
@@ -45,6 +49,9 @@ class WebAssetContractTests(unittest.TestCase):
         for endpoint in (
             "/api/runs/",
             "/events",
+            "/experiment",
+            "/propose",
+            "/return-to-diagnosis",
             "/approve",
             "/reject",
             "/request-diagnosis",
@@ -61,6 +68,9 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn("renderExperiment", js)
         self.assertIn("collectClaims", js)
         self.assertIn("renderClaimsList", js)
+        self.assertIn("runExperiment", js)
+        self.assertIn("proposePatch", js)
+        self.assertIn("regression_test", js)
         self.assertIn("renderReproduction({ state: \"created\", input: {} }, []);", js)
         self.assertIn("renderVerification({ state: \"created\", verification: null });", js)
         self.assertGreaterEqual(js.count("await loadRun();"), 2)

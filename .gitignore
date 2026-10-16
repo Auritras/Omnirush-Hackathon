@@ -2,6 +2,8 @@
 .superpowers/
 .omnirush/
 .proofix-data/
+.proofix/
+
 .env
 .venv/
 __pycache__/

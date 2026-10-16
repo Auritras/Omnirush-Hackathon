@@ -91,16 +91,30 @@
             <div id="hypotheses-list" class="hypothesis-list"><p class="empty-state">No specialist hypotheses have been recorded. Diagnosis remains unproven.</p></div>
           </article>
 
+          <article class="panel panel-experiment" aria-labelledby="experiment-heading">
+            <div class="section-heading"><div><p class="eyebrow">04 / EXPERIMENT</p><h2 id="experiment-heading">Guarded experiment</h2></div><span id="experiment-status" class="status-pill status-pending">Not run</span></div>
+            <div class="experiment-form">
+              <label for="experiment-kind">Vocabulary<select id="experiment-kind"><option value="named_test_or_build">Named test/build</option><option value="dependency_runtime_inspection">Runtime inspection</option><option value="proposed_regression_test">Proposed regression</option><option value="parent_commit_comparison">Parent comparison</option></select></label>
+              <label for="experiment-command">Command<input id="experiment-command" type="text" placeholder="python -m unittest tests.test_parser"></label>
+              <button id="experiment-button" class="button button-outline" type="button" disabled>Run experiment</button>
+            </div>
+          </article>
+
           <article class="panel panel-patch" aria-labelledby="patch-heading">
             <div class="section-heading"><div><p class="eyebrow">05 / PATCH</p><h2 id="patch-heading">Patch review</h2></div><span id="patch-status" class="status-pill status-pending">No proposal</span></div>
             <div class="patch-meta"><div><span class="field-label">DIGEST</span><code id="patch-digest">—</code></div><div><span class="field-label">RISK</span><strong id="patch-risk">—</strong></div><div><span class="field-label">CHANGED LINES</span><strong id="patch-lines">—</strong></div></div>
             <div class="diff-wrap"><span class="field-label">DIFF</span><pre id="patch-diff">No patch proposal recorded.</pre></div>
             <div class="patch-details"><div><span class="field-label">CHANGED FILES</span><div id="changed-files" class="chip-list"><span class="muted">None recorded</span></div></div><div><span class="field-label">REGRESSION TEST</span><code id="regression-test">—</code></div></div>
+            <div class="proposal-form" aria-label="Patch proposal">
+              <label for="diff-input">Unified diff<textarea id="diff-input" rows="7" placeholder="diff --git ..."></textarea></label>
+              <label for="regression-input">Explicit regression command<input id="regression-input" type="text" placeholder="python -m unittest tests.test_parser"></label>
+              <button id="propose-button" class="button button-amber" type="button" disabled>Propose patch</button>
+            </div>
             <div class="approval-form" aria-label="Patch decision audit details">
               <label for="actor-input">Actor<input id="actor-input" name="actor" type="text" autocomplete="off" placeholder="operator name"></label>
               <label for="timestamp-input">UTC timestamp<input id="timestamp-input" name="timestamp" type="text" autocomplete="off" placeholder="2026-10-15T00:00:00Z"></label>
             </div>
-            <div class="action-row"><button id="approve-button" class="button button-green" type="button" disabled>Approve patch</button><button id="reject-button" class="button button-danger" type="button" disabled>Reject</button><button id="diagnosis-button" class="button button-outline" type="button" disabled>Request diagnosis</button></div>
+            <div class="action-row"><button id="approve-button" class="button button-green" type="button" disabled>Approve patch</button><button id="reject-button" class="button button-danger" type="button" disabled>Reject</button><button id="diagnosis-button" class="button button-outline" type="button" disabled>Request diagnosis</button><button id="recovery-button" class="button button-outline" type="button" disabled>Return to diagnosis</button></div>
             <p id="patch-action-status" class="form-note" role="status">Actions unlock only when the server reports an awaiting approval state.</p>
           </article>
 

@@ -39,6 +39,13 @@ class FixtureRepositoryTests(unittest.TestCase):
         finally:
             temporary.cleanup()
 
+    def test_recorded_demo_evidence_references_checked_in_fixture_paths_and_commands(self):
+        recorded = (FIXTURE.parent / "omnirush" / "reproducible-run.json").read_text(encoding="utf-8")
+        self.assertIn('"parser.py"', recorded)
+        self.assertIn('"tests/test_parser.py"', recorded)
+        self.assertIn('"python -m unittest tests.test_parser"', recorded)
+        self.assertNotIn('"case.py"', recorded)
+
     def test_reset_restores_broken_state_offline_and_fixture_is_dependency_free(self):
         temporary, root = self._copy()
         try:

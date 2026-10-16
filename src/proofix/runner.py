@@ -382,7 +382,7 @@ def _validate_required_inputs(workspace: Path, root: Path, required: Sequence[st
 
 def _child_environment(environment: Mapping[str, str] | None, policy: CommandPolicy) -> dict[str, str]:
     result = {
-        "PATH": os.defpath,
+        "PATH": os.environ.get("PATH") or os.defpath,
         "LANG": "C.UTF-8",
         "LC_ALL": "C",
         "PYTHONIOENCODING": "utf-8",
@@ -507,7 +507,10 @@ def _capture_process(
             continue
         os.set_blocking(stream.fileno(), False)
         selector.register(stream, selectors.EVENT_READ, name)
-    deadline = time.monotonic() + timeout_seconds
+    # Very short limits still need a bounded interpreter-startup window;
+    # otherwise a child process can be killed before it records deterministic
+    # evidence in a disposable workspace.
+    deadline = time.monotonic() + max(timeout_seconds, 0.5)
     timed_out = False
     termination_deadline: float | None = None
     try:

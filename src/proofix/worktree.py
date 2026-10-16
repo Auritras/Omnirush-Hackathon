@@ -130,12 +130,14 @@ class WorkspaceManager:
         self.run_root = Path(run_root).expanduser().resolve(strict=False)
         self._workspaces_root = self.run_root / "workspaces"
         self._token = object()
+        self._active: dict[Path, WorkspaceSnapshot] = {}
 
     def snapshot_repository(
         self,
         repository: os.PathLike[str] | str,
         *,
         snapshot_mode: str = "clean",
+        commit: str | None = None,
     ) -> WorkspaceSnapshot:
         """Create a clean committed or explicitly dirty disposable workspace."""
 
@@ -155,7 +157,8 @@ class WorkspaceManager:
         git_root = self._git_root(source)
         if source != git_root:
             raise ValueError("repository path must be the Git worktree root")
-        commit = self._git_output(git_root, "rev-parse", "HEAD")
+        requested_commit = commit
+        commit = self._git_output(git_root, "rev-parse", requested_commit or "HEAD")
         self._ensure_run_root()
         destination = self._new_destination()
         materialization = "copy"
@@ -177,7 +180,7 @@ class WorkspaceManager:
         except Exception:
             self._discard_path(destination)
             raise
-        return WorkspaceSnapshot(
+        snapshot = WorkspaceSnapshot(
             path=destination,
             repository=git_root,
             snapshot_mode=normalized_mode,
@@ -185,6 +188,8 @@ class WorkspaceManager:
             materialization=materialization,
             manager_token=self._token,
         )
+        self._active[destination] = snapshot
+        return snapshot
 
     def _ensure_run_root(self) -> None:
         self.run_root.mkdir(parents=True, exist_ok=True)
@@ -208,6 +213,18 @@ class WorkspaceManager:
                 shutil.rmtree(path)
             else:
                 path.unlink(missing_ok=True)
+        self._active.pop(path, None)
+
+    def cleanup_all(self) -> None:
+        """Best-effort cleanup for every live snapshot owned by this manager."""
+        failures: list[BaseException] = []
+        for snapshot in list(self._active.values()):
+            try:
+                self.cleanup(snapshot)
+            except BaseException as exc:
+                failures.append(exc)
+        if failures:
+            raise RuntimeError(f"could not clean {len(failures)} disposable workspace(s)") from failures[0]
 
     def _new_destination(self) -> Path:
         return self._workspaces_root / f"snapshot-{uuid4().hex}"

@@ -7,7 +7,7 @@
       "response": {
         "schema_version": "1.0",
         "hypothesis": "The failing parser branch raises before consuming the required token.",
-        "supporting_evidence": [{"kind": "file", "path": "case.py", "line": 1, "summary": "Reproduction entry point"}],
+        "supporting_evidence": [{"kind": "file", "path": "parser.py", "line": 15, "summary": "Parser delimiter handling"}],
         "contradicting_evidence": [],
         "confidence": 0.78,
         "experiment": "Run the focused failing command after tracing parser input."
@@ -19,7 +19,7 @@
       "response": {
         "schema_version": "1.0",
         "hypothesis": "A recent change altered the failure path without updating its test expectation.",
-        "supporting_evidence": [{"kind": "command", "command": "python case.py", "result": "failed", "summary": "Deterministic failing command"}],
+        "supporting_evidence": [{"kind": "command", "command": "python -m unittest tests.test_parser", "result": "failed", "summary": "Deterministic failing command"}],
         "contradicting_evidence": [],
         "confidence": 0.62,
         "experiment": "Compare the focused command against the parent commit."
@@ -43,7 +43,7 @@
       "response": {
         "schema_version": "1.0",
         "hypothesis": "The regression test does not cover the failing input.",
-        "supporting_evidence": [{"kind": "test", "command": "python case.py", "result": "failed", "summary": "The fixture command is the failing check."}],
+        "supporting_evidence": [{"kind": "test", "command": "python -m unittest tests.test_parser", "result": "failed", "summary": "The fixture command is the failing check."}],
         "contradicting_evidence": [],
         "confidence": 0.55,
         "experiment": "Add a focused assertion for the failing input and run it."
@@ -55,7 +55,7 @@
       "response": {
         "schema_version": "1.0",
         "hypothesis": "The observed input follows an unhandled code path.",
-        "supporting_evidence": [{"kind": "file", "path": "case.py", "line": 1, "summary": "Observed execution path"}],
+        "supporting_evidence": [{"kind": "file", "path": "tests/test_parser.py", "line": 12, "summary": "Regression case for values containing equals"}],
         "contradicting_evidence": [],
         "confidence": 0.48,
         "experiment": "Trace the input through the implementation branch."

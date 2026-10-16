@@ -225,7 +225,7 @@ class OrchestratorTests(unittest.TestCase):
 -sys.exit(1)
 +print('fixed')
 """
-            self.assertEqual(orchestrator.propose_patch(run_id, diff).state, "awaiting_approval")
+            self.assertEqual(orchestrator.propose_patch(run_id, diff, "python -m unittest tests.test_case").state, "awaiting_approval")
             approved = orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z", patch_digest=orchestrator.store.get_run(run_id).patch["digest"])
             self.assertEqual(approved.state, "applying")
             restarted = ProofFixOrchestrator(store, WorkspaceManager(root / "workspace-root"), run_command, RecordedSessionClient(Path("fixtures/omnirush/reproducible-run.json")))
@@ -250,7 +250,7 @@ class OrchestratorTests(unittest.TestCase):
 -sys.exit(1)
 +print('fixed')
 """
-            orchestrator.propose_patch(run_id, diff)
+            orchestrator.propose_patch(run_id, diff, "python -m unittest tests.test_case")
             current_digest = orchestrator.store.get_run(run_id).patch["digest"]
             with self.assertRaises(DomainError):
                 orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z")
@@ -280,7 +280,7 @@ class OrchestratorTests(unittest.TestCase):
 -sys.exit(1)
 +print('fixed')
 """
-                orchestrator.propose_patch(run_id, diff)
+                orchestrator.propose_patch(run_id, diff, "python -m unittest tests.test_case")
                 digest = orchestrator.store.get_run(run_id).patch["digest"]
                 if action == "reject":
                     result = orchestrator.reject_patch(run_id, "alice", "2026-10-15T00:00:00Z", digest)
@@ -310,7 +310,7 @@ class OrchestratorTests(unittest.TestCase):
 -sys.exit(1)
 +print('fixed')
 """
-                orchestrator.propose_patch(run_id, diff)
+                orchestrator.propose_patch(run_id, diff, "python -m unittest tests.test_case")
                 current = orchestrator.store.get_run(run_id)
                 orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z", patch_digest=current.patch["digest"])
 
@@ -324,6 +324,35 @@ class OrchestratorTests(unittest.TestCase):
                 result = orchestrator.verify_patch(run_id, VerificationPlan("python case.py", "python case.py"))
                 self.assertEqual(result.state, "verification_blocked")
                 self.assertEqual(result.verification["checks"][0]["name"], "patch_integrity")
+
+    def test_restart_blocks_verification_when_source_revision_changed_after_reproduction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = self._repository(root, "import sys\nprint('failure')\nsys.exit(1)\n")
+            orchestrator = self._orchestrator(root, repository, "reproducible-run.json")
+            run_id = orchestrator.start_run(sanitize_intake({"repository_path": str(repository), "command": "python case.py", "failure_text": "failure"}))
+            orchestrator.advance_reproduction(run_id)
+            orchestrator.advance_diagnosis(run_id)
+            diff = """diff --git a/case.py b/case.py
+--- a/case.py
++++ b/case.py
+@@ -1,3 +1 @@
+-import sys
+-print('failure')
+-sys.exit(1)
++print('fixed')
+"""
+            orchestrator.propose_patch(run_id, diff, "python -m unittest tests.test_parser")
+            digest = orchestrator.store.get_run(run_id).patch["digest"]
+            orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z", digest)
+            (repository / "unrelated.txt").write_text("changed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "unrelated.txt"], cwd=repository, check=True)
+            subprocess.run(["git", "commit", "-qm", "changed source revision"], cwd=repository, check=True)
+            restarted = self._orchestrator(root, repository, "reproducible-run.json")
+            result = restarted.verify_patch(run_id, VerificationPlan("python case.py", "python -m unittest tests.test_parser"))
+            self.assertEqual(result.state, "verification_blocked")
+            self.assertEqual(result.verification["checks"][0]["name"], "snapshot_revision")
+            self.assertEqual(restarted.store.get_run(run_id).evidence[-1]["kind"], "repository_snapshot")
 
     def test_restart_rejects_tampered_persisted_patch_digest(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -342,7 +371,7 @@ class OrchestratorTests(unittest.TestCase):
 -sys.exit(1)
 +print('fixed')
 """
-            orchestrator.propose_patch(run_id, diff)
+            orchestrator.propose_patch(run_id, diff, "python -m unittest tests.test_case")
             orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z", patch_digest=orchestrator.store.get_run(run_id).patch["digest"])
             snapshot = root / "runs" / "runs" / run_id / "snapshot.json"
             persisted = json.loads(snapshot.read_text(encoding="utf-8"))

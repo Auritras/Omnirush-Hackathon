@@ -7,7 +7,7 @@ from http.client import HTTPConnection
 from pathlib import Path
 
 from proofix.omnirush import RecordedSessionClient
-from proofix.server import ServerConfig, create_server
+from proofix.server import ServerConfig, _verification_plan, create_server
 
 
 class ServerTests(unittest.TestCase):
@@ -36,6 +36,39 @@ class ServerTests(unittest.TestCase):
         response = self.connection.getresponse()
         raw = response.read()
         return response.status, response.getheader("Content-Type", ""), raw
+
+    def test_return_to_diagnosis_endpoint_recovers_blocked_verification(self):
+        root = Path(self.tmp.name)
+        repository = root / "recovery-repository"
+        repository.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+        subprocess.run(["git", "config", "user.email", "proofix@example.test"], cwd=repository, check=True)
+        subprocess.run(["git", "config", "user.name", "ProofFix Tests"], cwd=repository, check=True)
+        (repository / "case.py").write_text("import sys\nprint(\"failure\")\nsys.exit(1)\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repository, check=True)
+        subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repository, check=True)
+        status, _, body = self.request("POST", "/api/runs", {"repository_path": str(repository), "command": "python case.py", "failure_text": ""})
+        # Intake requires a meaningful failure description.
+        self.assertEqual(status, 400)
+        status, _, body = self.request("POST", "/api/runs", {"repository_path": str(repository), "command": "python case.py", "failure_text": "failure"})
+        self.assertEqual(status, 201); run_id = json.loads(body)["run_id"]
+        self.assertEqual(json.loads(self.request("POST", f"/api/runs/{run_id}/reproduce", {})[2])["state"], "reproduced")
+        self.assertEqual(json.loads(self.request("POST", f"/api/runs/{run_id}/diagnose", {})[2])["state"], "diagnosing")
+        diff = """diff --git a/case.py b/case.py
+--- a/case.py
++++ b/case.py
+@@ -1,2 +1,1 @@
+-import sys
+-sys.exit(1)
++print('fixed')
+"""
+        status, _, body = self.request("POST", f"/api/runs/{run_id}/patch", {"diff": diff, "regression_test": "python -m unittest tests.test_case"})
+        self.assertEqual(status, 200); digest = json.loads(body)["patch"]["digest"]
+        self.assertEqual(json.loads(self.request("POST", f"/api/runs/{run_id}/approve", {"actor": "alice", "timestamp": "2026-10-15T00:00:00Z", "patch_digest": digest})[2])["state"], "applying")
+        status, _, body = self.request("POST", f"/api/runs/{run_id}/verify", {"original_failure_command": "python case.py", "regression_test": "python -m unittest tests.test_case"})
+        self.assertEqual(status, 200); self.assertEqual(json.loads(body)["state"], "verification_blocked")
+        status, _, body = self.request("POST", f"/api/runs/{run_id}/return-to-diagnosis", {"actor": "alice", "timestamp": "2026-10-15T00:00:00Z"})
+        self.assertEqual(status, 200); self.assertEqual(json.loads(body)["state"], "diagnosing")
 
     def test_intake_creates_run_and_reads_snapshot_and_events(self):
         status, content_type, body = self.request("POST", "/api/runs", {
@@ -104,6 +137,13 @@ class ServerTests(unittest.TestCase):
         response = self.connection.getresponse()
         self.assertEqual(response.status, 200)
         self.assertEqual(json.loads(response.read())["run_id"], run_id)
+
+    def test_verification_plan_rejects_non_finite_non_positive_and_oversized_timeout(self):
+        base = {"original_failure_command": "python -m unittest tests.test_case", "regression_test": "python -m unittest tests.test_parser"}
+        for value in (float("inf"), float("nan"), 0, -1, 301):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                _verification_plan({**base, "timeout_seconds": value})
+        self.assertEqual(_verification_plan({**base, "timeout_seconds": 300}).timeout_seconds, 300)
 
     def test_bounded_request_body_is_rejected(self):
         status, _, body = self.request("POST", "/api/runs", {"repository_path": ".", "command": "false", "failure_text": "x" * 300})
@@ -176,7 +216,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 201)
         run = json.loads(body)
         self.assertEqual(run["input"]["mode"], "recorded/demo")
-        self.assertEqual(run["input"]["repository_path"], str(Path(__file__).resolve().parents[1] / "fixtures" / "broken-parser-repo"))
+        self.assertTrue(Path(run["input"]["repository_path"]).is_dir())
+        self.assertTrue((Path(run["input"]["repository_path"]) / ".git").is_dir())
         self.assertEqual(run["input"]["command"], "python -m unittest discover -s tests -v")
         self.assertIn("too many values to unpack", run["input"]["failure_text"])
         self.assertEqual(run["input"]["constraints"], [])
@@ -223,6 +264,13 @@ class ServerTests(unittest.TestCase):
         status, _, body = self.request("POST", f"/api/runs/{run_id}/diagnosis", {})
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["state"], "diagnosing")
+        status, _, body = self.request("POST", f"/api/runs/{run_id}/experiment", {"kind": "named_test_or_build", "command": "python -m unittest tests.test_case"})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["state"], "diagnosing")
+        status, _, body = self.request("POST", f"/api/runs/{run_id}/patch", {"diff": "", "regression_test": "python -m unittest tests.test_case"})
+        self.assertEqual(status, 400)
+        status, _, body = self.request("POST", f"/api/runs/{run_id}/patch", {"diff": "diff --git a/case.py b/case.py\n--- a/case.py\n+++ b/case.py\n@@ -1,3 +1,1 @@\n-import sys\n-print('expected failure')\n-sys.exit(2)\n+print('fixed')\n", "regression_test": "python case.py"})
+        self.assertEqual(status, 400)
         diff = """diff --git a/case.py b/case.py
 --- a/case.py
 +++ b/case.py
@@ -232,7 +280,7 @@ class ServerTests(unittest.TestCase):
 -sys.exit(2)
 +print('fixed')
 """
-        status, _, body = self.request("POST", f"/api/runs/{run_id}/patch", {"diff": diff})
+        status, _, body = self.request("POST", f"/api/runs/{run_id}/patch", {"diff": diff, "regression_test": "python -m unittest tests.test_case"})
         self.assertEqual(status, 200)
         proposal = json.loads(body)["patch"]
         digest = proposal["digest"]
@@ -244,7 +292,7 @@ class ServerTests(unittest.TestCase):
             status, _, body = self.request("POST", f"/api/runs/{run_id}/{action}", {"actor": "alice", "timestamp": "2026-10-15T00:00:00Z", "patch_digest": digest})
             self.assertEqual(status, 200, action)
             self.assertEqual(json.loads(body)["state"], "diagnosing")
-            status, _, body = self.request("POST", f"/api/runs/{run_id}/patch", {"diff": diff})
+            status, _, body = self.request("POST", f"/api/runs/{run_id}/patch", {"diff": diff, "regression_test": "python -m unittest tests.test_case"})
             self.assertEqual(status, 200)
             digest = json.loads(body)["patch"]["digest"]
         status, _, body = self.request("POST", f"/api/runs/{run_id}/approve", {"actor": "alice", "timestamp": "2026-10-15T00:00:00Z", "patch_digest": digest})

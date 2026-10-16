@@ -45,11 +45,15 @@ def validate_unified_diff(
     diff: str,
     repository_root: os.PathLike[str] | str,
     scope: Iterable[str] | None = None,
+    *,
+    regression_test: str | None = None,
+    original_command: str | None = None,
 ) -> PatchProposal:
     """Parse a normal unified diff without changing ``repository_root``."""
 
     if not isinstance(diff, str) or not diff.strip() or "\x00" in diff:
         raise ValueError("patch diff is empty or malformed")
+    regression_test = _require_distinct_regression_command(regression_test, original_command)
     root = Path(repository_root).expanduser().resolve(strict=False)
     if not root.exists() or not root.is_dir():
         raise ValueError("repository root must be an existing directory")
@@ -66,6 +70,7 @@ def validate_unified_diff(
         digest=digest,
         diff_ref=f"patches/{digest.removeprefix('sha256:')}.diff",
         files=files,
+        regression_test=regression_test,
         risk_summary="Validated unified diff; application remains approval-gated.",
         verification_plan=["original failure", "regression test", "relevant tests", "diff/syntax/scope"],
     )
@@ -74,6 +79,25 @@ def validate_unified_diff(
     proposal.diff = diff  # type: ignore[attr-defined]
     proposal.repository_root = root  # type: ignore[attr-defined]
     return proposal
+
+
+def _require_distinct_regression_command(regression_test: str | None, original_command: str | None) -> str:
+    if not isinstance(regression_test, str) or not regression_test.strip():
+        raise ValueError("an explicit non-empty regression command is required")
+    if not isinstance(original_command, str) or not original_command.strip():
+        raise ValueError("the original failure command is required to validate regression distinctness")
+    regression = _command_identity(regression_test)
+    original = _command_identity(original_command)
+    if not regression or regression == original:
+        raise ValueError("regression command must be distinct from the original failure command")
+    return regression_test.strip()
+
+
+def _command_identity(command: str) -> tuple[str, ...]:
+    try:
+        return tuple(shlex.split(command, posix=True))
+    except ValueError as exc:
+        raise ValueError("command has invalid quoting") from exc
 
 
 def approve_patch(

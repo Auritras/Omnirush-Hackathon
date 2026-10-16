@@ -182,7 +182,7 @@ class PatchProposal(JsonRecord):
     digest: str = ""
     diff_ref: str | None = None
     files: list[str] = field(default_factory=list)
-    regression_test: str | None = None
+    regression_test: str = ""
     risk_summary: str = ""
     verification_plan: list[str] = field(default_factory=list)
 
@@ -193,12 +193,14 @@ class PatchProposal(JsonRecord):
         if self.diff_ref is not None:
             self.diff_ref = _artifact_ref(self.diff_ref)
         _validate_bounded(self.regression_test, "regression_test")
+        if not isinstance(self.regression_test, str) or not self.regression_test.strip():
+            raise ValidationError("patch regression_test is required")
         _validate_json(self.files, field_name="patch files")
         _validate_json(self.verification_plan, field_name="verification plan")
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "PatchProposal":
-        _require_mapping_fields(value, {"schema_version", "digest", "files", "verification_plan"}, "patch")
+        _require_mapping_fields(value, {"schema_version", "digest", "files", "regression_test", "verification_plan"}, "patch")
         return cls(**{item.name: value[item.name] for item in fields(cls) if item.name in value})
 
 

@@ -17,7 +17,7 @@
     verification_blocked: "Verification is blocked. The patch remains unverified.",
     verified: "All server-recorded verification checks passed. The patch is verified for this run."
   };
-  const ACTION_ENDPOINTS = { approve: "/approve", reject: "/reject", diagnosis: "/request-diagnosis", verify: "/verify", export: "/export" };
+  const ACTION_ENDPOINTS = { approve: "/approve", reject: "/reject", diagnosis: "/request-diagnosis", recover: "/return-to-diagnosis", verify: "/verify", export: "/export", experiment: "/experiment", propose: "/propose" };
   let currentRun = null;
   let currentEvents = [];
 
@@ -76,10 +76,13 @@
     setText("provenance-badge", "Waiting for data");
     $("provenance-badge").className = "badge badge-neutral";
     ["repository-value", "branch-value", "commit-value", "run-id-value", "provenance-value"].forEach((id) => setText(id, "—"));
-    ["export-markdown", "export-json", "approve-button", "reject-button", "diagnosis-button", "verify-button"].forEach((id) => { if ($(id)) $(id).disabled = true; });
+    ["export-markdown", "export-json", "approve-button", "reject-button", "diagnosis-button", "recovery-button", "verify-button", "experiment-button", "propose-button"].forEach((id) => { if ($(id)) $(id).disabled = true; });
     setText("connection-label", "Awaiting run snapshot");
     if ($("actor-input")) $("actor-input").value = "";
     if ($("timestamp-input")) $("timestamp-input").value = "";
+    if ($("diff-input")) $("diff-input").value = "";
+    if ($("regression-input")) $("regression-input").value = "";
+    if ($("experiment-command")) $("experiment-command").value = "";
     setText("patch-action-status", "Actions unlock only when the server reports an awaiting approval state.");
     renderReproduction({ state: "created", input: {} }, []);
     renderHypotheses({ hypotheses: [] });
@@ -247,9 +250,13 @@
     setText("patch-diff", patch.diff, "No patch proposal recorded.");
     chips($("changed-files"), listValue(patch.files));
     setText("regression-test", patch.regression_test);
+    if ($("regression-input") && patch.regression_test) $("regression-input").value = patch.regression_test;
     const enabled = state === "awaiting_approval" && Boolean(patch.digest);
     ["approve-button", "reject-button", "diagnosis-button"].forEach((id) => { $(id).disabled = !enabled; });
+    if ($("recovery-button")) $("recovery-button").disabled = !["verification_failed", "verification_blocked"].includes(state);
     if ($("verify-button")) $("verify-button").disabled = state !== "applying";
+    if ($("experiment-button")) $("experiment-button").disabled = !["diagnosing", "experimenting"].includes(state);
+    if ($("propose-button")) $("propose-button").disabled = !["diagnosing", "experimenting"].includes(state);
     if (approval.action) setText("patch-action-status", `${approval.action} by ${text(approval.actor)} at ${text(approval.timestamp)}.`);
   }
 
@@ -363,10 +370,27 @@
     } catch (error) { announce(`Export failed: ${error.message}`); setText("patch-action-status", `Export failed: ${error.message}`); }
   }
 
+  async function runExperiment() {
+    if (!currentRun || !currentRun.run_id) return;
+    try {
+      await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${ACTION_ENDPOINTS.experiment}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ kind: $("experiment-kind").value, command: $("experiment-command").value.trim() }) });
+      await loadRun(); announce("Guarded experiment completed and evidence was refreshed.");
+    } catch (error) { setText("experiment-status", `Blocked: ${error.message}`); announce(`Experiment not accepted: ${error.message}`); }
+  }
+
+  async function proposePatch() {
+    if (!currentRun || !currentRun.run_id) return;
+    const diff = $("diff-input").value; const regression_test = $("regression-input").value.trim();
+    try {
+      await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${ACTION_ENDPOINTS.propose}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ diff, regression_test }) });
+      await loadRun(); announce("Patch proposal recorded with its explicit regression command.");
+    } catch (error) { setText("patch-action-status", `Proposal not accepted: ${error.message}`); announce(`Patch proposal not accepted: ${error.message}`); }
+  }
+
   async function patchAction(action) {
     if (!currentRun || !currentRun.run_id) return;
     const patch = mapping(currentRun.patch); const actor = $("actor-input").value.trim(); const timestamp = $("timestamp-input").value.trim();
-    const payload = { actor, timestamp, patch_digest: patch.digest };
+    const payload = { actor, timestamp, ...(action === "recover" ? {} : { patch_digest: patch.digest }) };
     try {
       const endpoint = action === "request-diagnosis" ? ACTION_ENDPOINTS.diagnosis : ACTION_ENDPOINTS[action];
       await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify(payload) });
@@ -379,7 +403,7 @@
     if (!currentRun || !currentRun.run_id) return;
     const input = snapshotInput(currentRun); const patch = mapping(currentRun.patch); const plan = mapping(currentRun.verification).plan || {};
     try {
-      await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${ACTION_ENDPOINTS.verify}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ original_failure_command: plan.original_failure_command || input.command, regression_test: plan.regression_test || patch.regression_test || input.command, relevant_tests: listValue(plan.relevant_tests), broader_suite: plan.broader_suite }) });
+      await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${ACTION_ENDPOINTS.verify}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ original_failure_command: plan.original_failure_command || input.command, regression_test: plan.regression_test || patch.regression_test, relevant_tests: listValue(plan.relevant_tests), broader_suite: plan.broader_suite }) });
       await loadRun();
       announce("Verification request accepted; snapshot and events refreshed.");
     } catch (error) { announce(`Verification request not accepted: ${error.message}`); }
@@ -391,6 +415,9 @@
   $("approve-button").addEventListener("click", () => patchAction("approve"));
   $("reject-button").addEventListener("click", () => patchAction("reject"));
   $("diagnosis-button").addEventListener("click", () => patchAction("request-diagnosis"));
+  if ($("recovery-button")) $("recovery-button").addEventListener("click", () => patchAction("recover"));
+  if ($("experiment-button")) $("experiment-button").addEventListener("click", runExperiment);
+  if ($("propose-button")) $("propose-button").addEventListener("click", proposePatch);
   if ($("verify-button")) $("verify-button").addEventListener("click", verifyPatch);
   loadRun();
 }());

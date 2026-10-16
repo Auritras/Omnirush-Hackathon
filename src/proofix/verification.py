@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import math
 from typing import Any, Sequence
 
 from .experiments import validate_guarded_command
@@ -25,6 +26,12 @@ class VerificationPlan:
     broader_suite: str | Sequence[str] | None = None
     timeout_seconds: float = 30.0
     scope_files: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.timeout_seconds, (int, float)) or isinstance(self.timeout_seconds, bool) or not math.isfinite(float(self.timeout_seconds)) or not 0 < float(self.timeout_seconds) <= 300:
+            raise ValueError("verification timeout must be finite, positive, and no greater than 300 seconds")
+        if not _command_text(self.regression_test):
+            raise ValueError("an explicit regression command is required")
 
     @property
     def original_command(self) -> str | Sequence[str]:
@@ -58,12 +65,21 @@ class VerificationSummary:
         }
 
 
+
+def _command_text(command: str | Sequence[str] | None) -> str:
+    if isinstance(command, str):
+        return command.strip()
+    if isinstance(command, Sequence) and not isinstance(command, (bytes, bytearray)):
+        return " ".join(str(item) for item in command).strip()
+    return ""
+
 def verify_patch(
     patch: Any,
     workspace: os.PathLike[str] | str,
     runner: Any = run_command,
     plan: VerificationPlan | None = None,
     run_id: str | None = None,
+    run_root: os.PathLike[str] | str | None = None,
 ) -> VerificationSummary:
     """Apply an approved patch to a fresh copy and execute checks in order."""
 
@@ -75,8 +91,12 @@ def verify_patch(
     if not is_patch_approved(patch, run_id=run_id):
         return VerificationSummary("verification_blocked", [_blocked_check("patch_application", "patch has not been explicitly approved")])
 
+    created_controlled_root = run_root is None
+    controlled_root = Path(run_root).expanduser().resolve(strict=False) if run_root is not None else (source.parent / ".proofix-verification")
+    if not controlled_root.exists():
+        controlled_root.mkdir(parents=True, exist_ok=True)
     try:
-        temporary_root = Path(tempfile.mkdtemp(prefix="proofix-verification-"))
+        temporary_root = Path(tempfile.mkdtemp(prefix="verification-", dir=str(controlled_root)))
     except Exception as exc:
         return VerificationSummary("verification_blocked", [_blocked_check("patch_application", _bounded_error(exc))])
     verification_workspace = temporary_root / "workspace"
@@ -112,6 +132,8 @@ def verify_patch(
         return VerificationSummary("verified" if final_check.status == "passed" else "verification_blocked" if final_check.status == "blocked" else "verification_failed", checks)
     finally:
         shutil.rmtree(temporary_root, ignore_errors=True)
+        if created_controlled_root:
+            shutil.rmtree(controlled_root, ignore_errors=True)
 
 
 def _run_check(name: str, command: str | Sequence[str], workspace: Path, runner: Any, timeout: float) -> CheckResult:

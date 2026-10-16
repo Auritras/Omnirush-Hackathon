@@ -14,7 +14,7 @@ from .redaction import redact_text
 from .reproduction import compare_failure
 from .runner import CommandPolicy, run_command
 from .state import transition
-from .experiments import ExperimentSpec, run_experiment
+from .experiments import ExperimentSpec, run_experiment, validate_guarded_command
 from .patches import approve_patch, reject_patch, request_another_diagnosis, validate_audit, validate_proposal_digest, validate_unified_diff
 from .verification import VerificationPlan, verify_patch
 
@@ -108,6 +108,8 @@ class ProofFixOrchestrator:
             }
         additions = [evidence] + ([snapshot_evidence] if snapshot_evidence else [])
         self.store.update_run(replace(updated, evidence=[*updated.evidence, *additions]))
+        if target in {"not_reproduced", "blocked"}:
+            self._cleanup_snapshot(run_id)
         return self.store.get_run(run_id)
 
     def advance_diagnosis(self, run_id: str) -> RunRecord:
@@ -141,9 +143,11 @@ class ProofFixOrchestrator:
         )
         return self.store.get_run(run_id)
 
-    def run_experiment(self, run_id: str, spec: ExperimentSpec) -> RunRecord:
+    def run_experiment(self, run_id: str, spec: ExperimentSpec | Mapping[str, Any]) -> RunRecord:
         """Run one explicit experiment and return to diagnosis with evidence."""
         run = self.store.get_run(run_id)
+        if not isinstance(spec, ExperimentSpec):
+            spec = ExperimentSpec(**dict(spec))
         if run.state not in {"diagnosing", "experimenting"}:
             raise DomainError(f"experiments are gated by diagnosis: {run.state}")
         snapshot = self._snapshots.get(run_id)
@@ -152,7 +156,7 @@ class ProofFixOrchestrator:
         if run.state == "diagnosing":
             self._append_transition(run, "experimenting", "orchestrator:experiment_started", {"stage": "experiment", "kind": spec.normalized_kind})
         workspace = getattr(snapshot, "path", getattr(snapshot, "workspace", snapshot))
-        result = run_experiment(spec, workspace, self.runner)
+        result = run_experiment(spec, workspace, self.runner, run_root=self.workspace_manager.run_root)
         updated = self.store.get_run(run_id)
         self.store.update_run(replace(updated, experiments=[*updated.experiments, result.to_dict()]))
         current = self.store.get_run(run_id)
@@ -160,13 +164,23 @@ class ProofFixOrchestrator:
             self._append_transition(current, "diagnosing", "orchestrator:experiment_result", {"stage": "experiment", "outcome": result.status, "output_digest": result.output_digest})
         return self.store.get_run(run_id)
 
-    def propose_patch(self, run_id: str, diff: str, scope: list[str] | None = None) -> RunRecord:
+    def propose_patch(self, run_id: str, diff: str, regression_test: str | None = None, scope: list[str] | None = None) -> RunRecord:
         run = self.store.get_run(run_id)
         if run.state not in {"diagnosing", "experimenting"}:
             raise DomainError(f"patch proposals are gated by diagnosis: {run.state}")
         snapshot = self._snapshots.get(run_id)
         repository = getattr(snapshot, "path", getattr(snapshot, "workspace", snapshot)) if snapshot is not None else sanitize_intake(run.intake).repository_path
-        proposal = validate_unified_diff(diff, repository, scope)
+        original_command = sanitize_intake(run.intake).command
+        try:
+            validate_guarded_command(regression_test or "", repository, "proposed_regression_test")
+        except Exception as exc:
+            raise DomainError(f"invalid regression command: {exc}") from exc
+        try:
+            proposal = validate_unified_diff(diff, repository, scope, regression_test=regression_test, original_command=original_command)
+        except ValueError as exc:
+            if "regression" in str(exc).casefold():
+                raise DomainError(f"invalid regression command: {exc}") from exc
+            raise
         details = {"stage": "patch", "outcome": "proposed", "patch_digest": proposal.digest, "files": proposal.files}
         self._append_transition(run, "patch_proposed", "orchestrator:patch_proposed", details)
         current = self.store.get_run(run_id)
@@ -237,22 +251,75 @@ class ProofFixOrchestrator:
             self.store.update_run(replace(current, verification=blocked))
             self._append_transition(self.store.get_run(run_id), "verification_blocked", "orchestrator:verification_result", {"stage": "verification", "outcome": "verification_blocked", "failed_check": "patch_integrity"})
             return self.store.get_run(run_id)
-        snapshot = self._snapshots.get(run_id)
-        if snapshot is None:
-            snapshot = self.workspace_manager.snapshot_repository(sanitize_intake(run.intake).repository_path)
-            self._snapshots[run_id] = snapshot
+        try:
+            snapshot = self._snapshot_for_verification(run_id, run)
+        except DomainError as exc:
+            self._append_transition(run, "verifying", "orchestrator:verification_started", {"stage": "verification", "outcome": "snapshot_integrity"})
+            blocked = {"status": "verification_blocked", "checks": [{"name": "snapshot_revision", "status": "blocked", "details": {"error": str(exc)[:4096]}}]}
+            current = self.store.get_run(run_id)
+            self.store.update_run(replace(current, verification=blocked))
+            self._append_transition(self.store.get_run(run_id), "verification_blocked", "orchestrator:verification_result", {"stage": "verification", "outcome": "verification_blocked", "failed_check": "snapshot_revision"})
+            return self.store.get_run(run_id)
         if proposal is None or snapshot is None:
             raise DomainError("approved patch or reproduction snapshot is unavailable")
+        if not isinstance(proposal.regression_test, str) or not proposal.regression_test.strip():
+            raise DomainError("persisted patch proposal has no explicit regression command")
+        if _command_identity(plan.regression_test) != _command_identity(proposal.regression_test):
+            raise DomainError("verification regression command does not match the persisted patch proposal")
         self._patches[run_id] = proposal
-        self._append_transition(run, "verifying", "orchestrator:verification_started", {"stage": "verification", "patch_digest": proposal.digest})
+        self._append_transition(run, "verifying", "orchestrator:verification_started", {"stage": "verification", "patch_digest": proposal.digest, "snapshot_commit": snapshot.commit})
         source = getattr(snapshot, "path", getattr(snapshot, "repository", snapshot))
-        summary = verify_patch(proposal, source, self.runner, plan, run_id=run_id)
+        summary = verify_patch(proposal, source, self.runner, plan, run_id=run_id, run_root=self.workspace_manager.run_root)
         current = self.store.get_run(run_id)
         self.store.update_run(replace(current, verification=summary.to_dict()))
         target = {"verified": "verified", "verification_failed": "verification_failed", "verification_blocked": "verification_blocked"}[summary.status]
         failed = summary.failed_check
-        self._append_transition(self.store.get_run(run_id), target, "orchestrator:verification_result", {"stage": "verification", "outcome": summary.status, "failed_check": failed.name if failed else None})
+        self._append_transition(self.store.get_run(run_id), target, "orchestrator:verification_result", {"stage": "verification", "outcome": summary.status, "failed_check": failed.name if failed else None, "snapshot_commit": snapshot.commit})
+        self._cleanup_snapshot(run_id)
         return self.store.get_run(run_id)
+
+    def cleanup(self) -> None:
+        for run_id in list(self._snapshots):
+            self._cleanup_snapshot(run_id)
+        cleanup_all = getattr(self.workspace_manager, "cleanup_all", None)
+        if callable(cleanup_all):
+            cleanup_all()
+
+    def _cleanup_snapshot(self, run_id: str) -> None:
+        snapshot = self._snapshots.pop(run_id, None)
+        if snapshot is None:
+            return
+        try:
+            self.workspace_manager.cleanup(snapshot)
+        except Exception:
+            # Keep shutdown safe; a failed Git registration cleanup must remain observable
+            # to the manager's subsequent cleanup attempt rather than deleting blindly.
+            self._snapshots[run_id] = snapshot
+
+    def _snapshot_for_verification(self, run_id: str, run: RunRecord):
+        existing = self._snapshots.get(run_id)
+        repository = sanitize_intake(run.intake).repository_path
+        snapshot_record = next((item for item in run.evidence if isinstance(item, Mapping) and item.get("kind") == "repository_snapshot"), None)
+        details = snapshot_record.get("details", {}) if isinstance(snapshot_record, Mapping) else {}
+        expected_commit = details.get("commit") if isinstance(details, Mapping) else None
+        if not isinstance(expected_commit, str) or not expected_commit:
+            raise DomainError("reproduction snapshot revision is missing")
+        try:
+            current = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True, stderr=subprocess.PIPE).strip()
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise DomainError("source repository revision is unavailable") from exc
+        if current != expected_commit:
+            raise DomainError("source repository revision changed since reproduction")
+        if existing is not None:
+            if existing.commit != expected_commit:
+                raise DomainError("in-memory reproduction snapshot revision does not match persisted revision")
+            return existing
+        snapshot = self.workspace_manager.snapshot_repository(repository, commit=expected_commit)
+        if snapshot.commit != expected_commit:
+            self.workspace_manager.cleanup(snapshot)
+            raise DomainError("reproduction snapshot revision could not be restored")
+        self._snapshots[run_id] = snapshot
+        return snapshot
 
     def _proposal_from_run(self, run: RunRecord) -> PatchProposal | None:
         if not isinstance(run.patch, Mapping) or not run.patch.get("digest") or not isinstance(run.patch.get("diff"), str):
@@ -393,3 +460,13 @@ def _without_transition_fields(value: Any) -> Any:
     if isinstance(value, list):
         return [_without_transition_fields(item) for item in value]
     return value
+
+
+def _command_identity(command: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    import shlex
+    if isinstance(command, str):
+        try:
+            return tuple(shlex.split(command, posix=True))
+        except ValueError as exc:
+            raise DomainError("verification regression command has invalid quoting") from exc
+    return tuple(str(item) for item in command)

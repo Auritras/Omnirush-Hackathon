@@ -142,7 +142,7 @@ class StateTransitionTests(unittest.TestCase):
             EventRecord.new("run-test", "orchestrator:triage_started", details={"confidence": 0.5}),
             EvidenceRecord(kind="file", summary="Relevant source", details={"line": 42}),
             CheckResult(name="regression", status="passed", command="pytest tests/test_fix.py"),
-            PatchProposal(digest="sha256:abc", diff_ref="artifacts/patch.diff", files=["src/fix.py"]),
+            PatchProposal(digest="sha256:abc", diff_ref="artifacts/patch.diff", files=["src/fix.py"], regression_test="python -m unittest tests.test_fix"),
         ]
         for record in records:
             self.assertEqual(record, type(record).from_json(record.to_json()))

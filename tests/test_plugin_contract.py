@@ -55,11 +55,15 @@ class ProofFixPluginContractTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
         for phrase in ("clean checkout", "fixture", "dashboard", "gh", "localhost", "approval", "report"):
             self.assertIn(phrase.casefold(), readme.casefold())
         self.assertIn("\ntest:", makefile)
         self.assertIn("make test", dockerfile)
         self.assertIn("python:3.12", dockerfile)
+        self.assertIn("/usr/local/bin", dockerfile)
+        self.assertIn("PROOFIX_DATA_ROOT=.proofix-data", env_example)
+        self.assertIn(".proofix-data", makefile)
 
     def test_typescript_runtime_executes_exact_plugin_validation_rules_when_available(self):
         bun = shutil.which("bun")
