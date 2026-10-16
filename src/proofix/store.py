@@ -47,6 +47,17 @@ class RunStore:
                 raise
             raise DomainError(f"malformed run snapshot: {run_id}") from exc
 
+    def update_run(self, run: RunRecord) -> None:
+        """Persist orchestrator-owned structured fields after an event append."""
+        if not isinstance(run, RunRecord):
+            raise DomainError("update_run requires a RunRecord")
+        current = self.get_run(run.run_id)
+        if current.intake != run.intake or current.created_at != run.created_at:
+            raise DomainError("run intake and creation time are immutable")
+        if current.state != run.state:
+            raise DomainError("run state must be changed by an append-only event")
+        self._write_snapshot(run)
+
     def append_event(self, event: EventRecord) -> None:
         if not isinstance(event, EventRecord):
             raise DomainError("append_event requires an EventRecord")

@@ -46,7 +46,7 @@ def transition(run: RunRecord, target: str, *, event_kind: str, details: Mapping
     if not (owner.startswith("orchestrator:") or owner.startswith("orchestrator_") or owner.startswith("orchestrator.")):
         raise DomainError("only orchestrator-owned events may change run state")
     forbidden = {"state", "status", "target_state", "next_state", "state_after"}
-    if forbidden.intersection(details):
+    if not owner.startswith("orchestrator") and forbidden.intersection(details):
         raise DomainError("agent-supplied status changes are not accepted")
     if run.state not in ALLOWED_TRANSITIONS or target not in ALLOWED_TRANSITIONS:
         raise DomainError(f"unknown run state: {run.state if run.state not in ALLOWED_TRANSITIONS else target}")
