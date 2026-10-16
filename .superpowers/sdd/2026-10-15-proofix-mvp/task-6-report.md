@@ -146,3 +146,32 @@ Complete.
 ### Concerns
 
 - Ambiguous unquoted `diff --git` path operands are rejected unless Git file headers or rename metadata provide the authoritative split; this preserves strict metadata and path validation.
+
+## Fix round 5
+
+### Status
+
+Complete.
+
+### Commit
+
+`b063137` — `fix: resolve git space paths with null headers`
+
+### Changes
+
+- Used the authoritative non-`/dev/null` `+++` or `---` file header to resolve unquoted Git path operands for new-file and deletion diffs containing ` b/`.
+- Resolved unquoted-space mode-only diffs using Git's same-path operand invariant while retaining strict containment, traversal, metadata, and quoted/rename validation.
+- Added a regression using a real Git-generated unquoted-space new-file diff whose old file header is `/dev/null`.
+
+### Exact checks and results
+
+- TDD red phase: `PYTHONPATH=src python -m unittest tests.test_patches.PatchTests.test_real_git_unquoted_space_new_file_uses_non_dev_null_header -v`: failed before the fix with `ValueError: ambiguous diff paths`.
+- `PYTHONPATH=src python -m unittest tests.test_patches -v`: passed; 9 patch tests ran successfully.
+- `make test`: passed; 87 tests ran successfully.
+- `PYTHONPATH=src python -m compileall -q src tests`: passed.
+- `git diff --check`: passed.
+- A concurrent post-report check batch produced two timeout-test `pid_file` failures; an isolated serial `make test` rerun passed all 87 tests.
+
+### Concerns
+
+- Git binary patches remain unsupported; textual new-file, deletion, mode-only, rename, quoted-path, and standard metadata forms are covered.
