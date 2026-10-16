@@ -364,7 +364,10 @@ def _artifacts(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]], supp
 
 
 def _result_label(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]]) -> str:
+    input_data = run.get("input", run.get("intake", {}))
     values = [run.get("mode"), run.get("result_label"), run.get("provenance")]
+    if isinstance(input_data, Mapping):
+        values.extend((input_data.get("mode"), input_data.get("provenance"), input_data.get("result_label")))
     for event in events:
         values.append(event.get("mode"))
         details = event.get("details")

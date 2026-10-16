@@ -23,21 +23,33 @@ from .verification import VerificationPlan, verify_patch
 class ProofFixOrchestrator:
     """Own every state transition; session responses can only add evidence."""
 
-    def __init__(self, store: Any, workspace_manager: Any, runner: Any = run_command, session_client: OmniRushSessionClient | None = None):
+    def __init__(
+        self,
+        store: Any,
+        workspace_manager: Any,
+        runner: Any = run_command,
+        session_client: OmniRushSessionClient | None = None,
+        run_metadata: Mapping[str, Any] | None = None,
+    ):
         self.store = store
         self.workspace_manager = workspace_manager
         self.runner = runner
         self.session_client = session_client if session_client is not None else RecordedSessionClient()
+        self.run_metadata = dict(run_metadata or {})
         self._snapshots: dict[str, Any] = {}
         self._patches: dict[str, Any] = {}
 
     def start_run(self, request: IntakeRequest | Mapping[str, Any]) -> str:
         intake = sanitize_intake(request.to_dict() if isinstance(request, IntakeRequest) else request)
-        run = self.store.create_run(intake.to_dict())
+        intake_data = intake.to_dict()
+        # Metadata is host-owned provenance (for example demo/recorded mode),
+        # never user instructions and never a client-provided status field.
+        intake_data.update(self.run_metadata)
+        run = self.store.create_run(intake_data)
         triage = _triage(intake)
-        self._append_transition(run, "triaging", "orchestrator:triage", {"stage": "triage", "triage": triage})
+        self._append_transition(run, "triaging", "orchestrator:triage", {"stage": "triage", "triage": triage, **self.run_metadata})
         run = self.store.get_run(run.run_id)
-        self._append_transition(run, "reproducing", "orchestrator:reproduction_started", {"stage": "reproduction"})
+        self._append_transition(run, "reproducing", "orchestrator:reproduction_started", {"stage": "reproduction", **self.run_metadata})
         updated = self.store.get_run(run.run_id)
         self.store.update_run(replace(updated, stages=[triage]))
         return run.run_id

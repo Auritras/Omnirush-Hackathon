@@ -56,6 +56,18 @@ Both commands run through the source checkout (`PYTHONPATH=src`) rather than
 requiring a global ProofFix installation. The server binds to localhost by
 default; it is not an internet-facing deployment.
 
+To export a persisted run through the same report layer, use the CLI without
+installing ProofFix globally:
+
+```sh
+PYTHONPATH=src python -m proofix.cli export RUN_ID exports/report.json --format json --data-root .proofix
+```
+
+The equivalent Make target is `make export RUN_ID=run-... OUTPUT=exports/report.md
+FORMAT=markdown`. The HTTP API exposes JSON snapshots and events under
+`/api/runs/RUN_ID`, artifact reads under `/api/runs/RUN_ID/artifacts/REF`, and
+Markdown/JSON reports under `/api/runs/RUN_ID/report?format=markdown|json`.
+
 ## Docker
 
 Build the reproducible image (the build installs Git and Make, then runs the
