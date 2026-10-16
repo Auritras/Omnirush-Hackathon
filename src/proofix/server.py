@@ -223,11 +223,19 @@ def _make_handler():
 
         def _post(self, route: list[str], payload: Any):
             if route == ["runs"] or route == ["intake"]:
-                data = dict(payload)
                 if self.server.config.demo:
-                    data.setdefault("repository_path", str(self.server.config.repository or _default_fixture_repository()))
-                    data.setdefault("command", "python -m unittest discover -s tests -v")
-                    data.setdefault("failure_text", "ValueError: too many values to unpack (expected 2)")
+                    data = {
+                        "repository_path": str(_default_fixture_repository()),
+                        "command": "python -m unittest discover -s tests -v",
+                        "failure_text": "ValueError: too many values to unpack (expected 2)",
+                        "constraints": [],
+                        "issue_url": None,
+                        "pr_url": None,
+                        "commit_sha": None,
+                        "branch": None,
+                    }
+                else:
+                    data = dict(payload)
                 run_id = self.server.orchestrator.start_run(sanitize_intake(data))
                 return 201, "application/json; charset=utf-8", self.server.store.get_run(run_id).to_dict()
             if len(route) < 3 or route[0] != "runs":
@@ -304,7 +312,7 @@ def _make_handler():
                 raise _HTTPError(400, "JSON body must be an object")
             return dict(decoded)
 
-        def _send(self, status: int, content_type: str, body: Any, headers: Mapping[str, str] | None = None):
+        def _send(self, status: int, content_type: str, body: Any, headers: Mapping[str, str] | None = None, *, write_body: bool = True):
             if isinstance(body, (dict, list)):
                 encoded = json.dumps(body, sort_keys=True, ensure_ascii=False).encode("utf-8")
                 content_type = "application/json; charset=utf-8"
@@ -319,13 +327,20 @@ def _make_handler():
             for name, value in (headers or {}).items():
                 self.send_header(name, value)
             self.end_headers()
-            self.wfile.write(encoded)
+            if write_body:
+                self.wfile.write(encoded)
 
         def _send_error(self, status: int, message: str):
             self._send(status, "application/json; charset=utf-8", {"error": _safe_error(message)})
 
         def _method_not_allowed(self):
-            self._send(405, "application/json; charset=utf-8", {"error": "method is not supported"}, {"Allow": "GET, POST"})
+            self._send(
+                405,
+                "application/json; charset=utf-8",
+                {"error": "method is not supported"},
+                {"Allow": "GET, POST"},
+                write_body=self.command != "HEAD",
+            )
 
     return Handler
 

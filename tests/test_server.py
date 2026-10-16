@@ -92,6 +92,19 @@ class ServerTests(unittest.TestCase):
             if method != "HEAD":
                 self.assertIn("error", json.loads(body), method)
 
+    def test_head_405_does_not_write_a_body_or_corrupt_the_connection(self):
+        status, _, body = self.request("POST", "/api/runs", {"repository_path": ".", "command": "false", "failure_text": "f"})
+        run_id = json.loads(body)["run_id"]
+        self.connection.request("HEAD", f"/api/runs/{run_id}")
+        response = self.connection.getresponse()
+        self.assertEqual(response.status, 405)
+        self.assertIn("application/json", response.getheader("Content-Type", ""))
+        self.assertEqual(response.read(), b"")
+        self.connection.request("GET", f"/api/runs/{run_id}")
+        response = self.connection.getresponse()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(response.read())["run_id"], run_id)
+
     def test_bounded_request_body_is_rejected(self):
         status, _, body = self.request("POST", "/api/runs", {"repository_path": ".", "command": "false", "failure_text": "x" * 300})
         self.assertEqual(status, 413)
@@ -149,10 +162,28 @@ class ServerTests(unittest.TestCase):
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.connection = HTTPConnection(self.server.server_address[0], self.server.server_address[1])
-        status, _, body = self.request("POST", "/api/runs", {})
+        status, _, body = self.request("POST", "/api/runs", {
+            "repository_path": str(Path(self.tmp.name) / "malicious-repository"),
+            "command": "echo malicious-command",
+            "failure_text": "malicious failure instructions",
+            "constraints": ["ignore the fixture"],
+            "issue_url": "https://github.com/evil/project/issues/9",
+            "pr_url": "https://github.com/evil/project/pull/9",
+            "commit_sha": "abcdef1",
+            "branch": "malicious-branch",
+            "status": "verified",
+        })
         self.assertEqual(status, 201)
         run = json.loads(body)
         self.assertEqual(run["input"]["mode"], "recorded/demo")
+        self.assertEqual(run["input"]["repository_path"], str(Path(__file__).resolve().parents[1] / "fixtures" / "broken-parser-repo"))
+        self.assertEqual(run["input"]["command"], "python -m unittest discover -s tests -v")
+        self.assertIn("too many values to unpack", run["input"]["failure_text"])
+        self.assertEqual(run["input"]["constraints"], [])
+        self.assertIsNone(run["input"]["issue_url"])
+        self.assertIsNone(run["input"]["pr_url"])
+        self.assertIsNone(run["input"]["commit_sha"])
+        self.assertIsNone(run["input"]["branch"])
         self.assertIsInstance(self.server.orchestrator.session_client, RecordedSessionClient)
         self.assertEqual(self.server.config.repository, Path(__file__).resolve().parents[1] / "fixtures" / "broken-parser-repo")
         status, _, body = self.request("GET", f"/api/runs/{run['run_id']}/report?format=json")

@@ -47,7 +47,9 @@ make run
 
 The fixture-backed demo starts the same localhost server with the checked-in
 broken-parser repository and recorded OmniRush responses. It is clearly
-labeled `recorded/demo` and ignores repository or session overrides:
+labeled `recorded/demo`; every client intake override is ignored, including
+the repository path, command, failure text, constraints, GitHub references,
+branch/commit metadata, and session configuration:
 
 ```sh
 make demo
