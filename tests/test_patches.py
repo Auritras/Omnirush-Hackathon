@@ -51,6 +51,21 @@ class PatchTests(unittest.TestCase):
             self.assertIn("diff --git a/old name.txt b/new b/file.txt", diff)
             self.assertEqual(validate_unified_diff(diff, repo).files, ["new b/file.txt"])
 
+    def test_real_git_unquoted_space_new_file_uses_non_dev_null_header(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "proofix@example.test"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "ProofFix Tests"], cwd=repo, check=True)
+            new_file = repo / "new b" / "file.txt"
+            new_file.parent.mkdir()
+            new_file.write_text("new\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            diff = subprocess.check_output(["git", "diff", "--cached", "--no-ext-diff", "--no-color"], cwd=repo, text=True)
+            self.assertIn("--- /dev/null", diff)
+            self.assertIn("+++ b/new b/file.txt", diff)
+            self.assertEqual(validate_unified_diff(diff, repo).files, ["new b/file.txt"])
+
     def test_malformed_absolute_traversal_and_scope_diffs_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

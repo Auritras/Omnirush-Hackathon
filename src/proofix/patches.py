@@ -224,6 +224,15 @@ def _parse_diff(diff: str) -> list[str]:
             # File headers disambiguate unquoted paths containing the token
             # `` b/`` when no rename metadata is present.
             expected_paths = (old_header, new_header)
+        elif old_header == "/dev/null" and new_header is not None and new_header != "/dev/null":
+            # A new-file diff still repeats the new path in both operands of
+            # ``diff --git``.  The real ``+++`` header is authoritative for
+            # resolving unquoted `` b/`` tokens in that repeated path.
+            expected_paths = (new_header, new_header)
+        elif new_header == "/dev/null" and old_header is not None and old_header != "/dev/null":
+            # Deletion diffs have the same shape, with the ``---`` header as
+            # the authoritative non-``/dev/null`` path.
+            expected_paths = (old_header, old_header)
         old, new = _parse_git_paths(git_paths, expected=expected_paths)
 
         if not has_file_headers:
@@ -320,6 +329,11 @@ def _parse_git_paths(value: str, *, expected: tuple[str, str] | None = None) -> 
         if len(matches) != 1:
             raise ValueError("diff paths do not match file headers or rename metadata")
         return matches[0]
+    same_path = [candidate for candidate in candidates if candidate[0] == candidate[1]]
+    if len(same_path) == 1:
+        # Git's mode-only form has no file headers, but repeats the same path
+        # on both sides.  That invariant safely resolves an internal `` b/``.
+        return same_path[0]
     if len(candidates) != 1:
         raise ValueError("ambiguous diff paths" if candidates else "malformed diff paths")
     return candidates[0]
