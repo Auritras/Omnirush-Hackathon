@@ -89,10 +89,10 @@ dd { margin: 8px 0 0; color: var(--paper); font-size: 13px; overflow: hidden; te
 .stage-index { grid-row: span 2; color: var(--faint); font-family: var(--mono); font-size: 10px; padding-top: 2px; }
 .stage-name { font-size: 12px; font-weight: 700; }
 .stage-status { color: var(--faint); font-size: 10px; }
-.stage-rail li.is-active { border-left-color: var(--amber); }
-.stage-rail li.is-active .stage-name, .stage-rail li.is-active .stage-index { color: var(--amber-soft); }
-.stage-rail li.is-complete .stage-name { color: var(--green); }
-.stage-rail li.is-blocked .stage-name, .stage-rail li.is-failed .stage-name { color: var(--red); }
+.stage-rail li.stage-active { border-left-color: var(--amber); }
+.stage-rail li.stage-active .stage-name, .stage-rail li.stage-active .stage-index { color: var(--amber-soft); }
+.stage-rail li.stage-complete .stage-name { color: var(--green); }
+.stage-rail li.stage-blocked .stage-name, .stage-rail li.stage-failed .stage-name { color: var(--red); }
 
 .workspace-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 18px; align-items: start; }
 .workspace-grid > .panel { padding: 23px; }
@@ -118,6 +118,13 @@ pre { margin: 0; min-height: 132px; max-height: 220px; overflow: auto; padding: 
 .hypothesis-title { margin: 0 0 11px; font-size: 13px; line-height: 1.45; }
 .hypothesis-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; color: var(--muted); font-size: 10px; }
 .hypothesis-meta strong { color: var(--paper); }
+.experiment-block { display: grid; gap: 6px; margin-top: 12px; padding: 10px 11px; border: 1px solid var(--line); border-left: 2px solid var(--blue); background: rgba(139,182,216,.05); }
+.experiment-block .field-label:last-of-type { margin-top: 4px; color: var(--blue); }
+.experiment-block p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.experiment-block code { color: var(--paper); font-size: 10px; overflow-wrap: anywhere; }
+.experiment-block .experiment-result { color: var(--paper); font-family: var(--mono); font-size: 10px; }
+.experiment-block .experiment-empty { color: var(--faint); }
+.experiment-block .experiment-output { max-height: 100px; overflow: auto; white-space: pre-wrap; }
 .evidence-pair { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .evidence-pair div { min-width: 0; padding-top: 8px; border-top: 1px solid var(--line); }
 .evidence-pair p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
@@ -147,7 +154,7 @@ pre { margin: 0; min-height: 132px; max-height: 220px; overflow: auto; padding: 
 .check-status.pending { color: var(--faint); }
 
 .evidence-drawer { margin-top: 18px; padding: 23px; }
-.evidence-columns { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 20px; }
+.evidence-columns { display: grid; grid-template-columns: 1fr 1.2fr 1fr 1fr; gap: 20px; }
 .evidence-columns section { min-width: 0; }
 .evidence-list { display: grid; gap: 7px; }
 .evidence-record { padding: 9px 10px; border-left: 2px solid var(--line-bright); background: var(--ink-raised); }
@@ -181,8 +188,12 @@ pre { margin: 0; min-height: 132px; max-height: 220px; overflow: auto; padding: 
   .workspace-grid { grid-template-columns: 1fr; }
   .panel-reproduction { grid-row: auto; }
   .workspace-grid > .panel, .run-strip, .evidence-drawer { padding: 18px; }
-  .evidence-columns { grid-template-columns: 1fr; gap: 22px; }
+  .evidence-columns { grid-template-columns: 1fr 1fr; gap: 22px; }
   .footer { display: grid; }
+}
+
+@media (max-width: 520px) {
+  .evidence-columns { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 470px) {

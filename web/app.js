@@ -17,7 +17,6 @@
     verification_blocked: "Verification is blocked. The patch remains unverified.",
     verified: "All server-recorded verification checks passed. The patch is verified for this run."
   };
-  const TERMINAL_STATES = new Set(Object.keys(TERMINAL_COPY));
   const ACTION_ENDPOINTS = { approve: "/approve", reject: "/reject", diagnosis: "/request-diagnosis", verify: "/verify", export: "/export" };
   let currentRun = null;
   let currentEvents = [];
@@ -78,7 +77,15 @@
     $("provenance-badge").className = "badge badge-neutral";
     ["repository-value", "branch-value", "commit-value", "run-id-value", "provenance-value"].forEach((id) => setText(id, "—"));
     ["export-markdown", "export-json", "approve-button", "reject-button", "diagnosis-button", "verify-button"].forEach((id) => { if ($(id)) $(id).disabled = true; });
+    setText("connection-label", "Awaiting run snapshot");
+    if ($("actor-input")) $("actor-input").value = "";
+    if ($("timestamp-input")) $("timestamp-input").value = "";
     setText("patch-action-status", "Actions unlock only when the server reports an awaiting approval state.");
+    renderReproduction({ state: "created", input: {} }, []);
+    renderHypotheses({ hypotheses: [] });
+    renderPatch({ state: "created", patch: null });
+    renderVerification({ state: "created", verification: null });
+    renderEvidence({}, []);
     renderStages("created");
   }
 
@@ -131,7 +138,8 @@
   function stageStatus(stage, state) {
     const order = { triage: 0, reproduction: 1, diagnosis: 2, experiment: 3, patch: 4, verification: 5 };
     const index = order[stage];
-    if (state === "blocked" || state === "verification_blocked") return stage === "verification" || index >= 1 ? (stage === "verification" ? "Blocked" : "Complete") : "Pending";
+    if (state === "blocked") return stage === "triage" ? "Complete" : stage === "reproduction" ? "Blocked" : "Pending";
+    if (state === "verification_blocked") return stage === "verification" ? "Blocked" : index < 5 ? "Complete" : "Pending";
     if (state === "not_reproduced") return stage === "reproduction" ? "Failed" : index < 1 ? "Complete" : "Pending";
     if (state === "verification_failed") return stage === "verification" ? "Failed" : index < 5 ? "Complete" : "Pending";
     if (state === "verified") return "Complete";
@@ -190,15 +198,37 @@
       card.appendChild(create("h3", hypothesis.hypothesis || "Unlabelled hypothesis", "hypothesis-title"));
       const meta = create("div", undefined, "hypothesis-meta");
       meta.appendChild(create("span", `Confidence: ${text(hypothesis.confidence)}`));
-      meta.appendChild(create("span", `Role: ${text(hypothesis.specialist_role || hypothesis.role)}`));
+      meta.appendChild(create("span", `Role: ${text(hypothesis.role)}`));
       meta.appendChild(create("span", `Session: ${text(hypothesis.session_id)}`));
-      meta.appendChild(create("span", `Experiment: ${text(hypothesis.experiment_status || hypothesis.status, "Not run")}`));
       card.appendChild(meta);
+      card.appendChild(renderExperiment(hypothesis, listValue(run.experiments)));
       const pair = create("div", undefined, "evidence-pair");
       pair.appendChild(evidenceColumn("SUPPORTING EVIDENCE", hypothesis.supporting_evidence));
       pair.appendChild(evidenceColumn("CONTRADICTING EVIDENCE", hypothesis.contradicting_evidence));
       card.appendChild(pair); list.appendChild(card);
     });
+  }
+
+  function renderExperiment(hypothesis, experiments) {
+    const block = create("div", undefined, "experiment-block");
+    block.appendChild(create("span", "PROPOSED EXPERIMENT", "field-label"));
+    block.appendChild(create("p", hypothesis.experiment || "No experiment proposed."));
+    const matching = experiments.filter((result) => {
+      const ids = [hypothesis.id, hypothesis.hypothesis_id, hypothesis.session_id].filter(Boolean).map(String);
+      return (result.hypothesis_id && ids.includes(String(result.hypothesis_id))) || (result.hypothesis && result.hypothesis === hypothesis.hypothesis);
+    });
+    const observed = matching[matching.length - 1];
+    block.appendChild(create("span", "OBSERVED RESULT", "field-label"));
+    if (!observed) {
+      block.appendChild(create("p", "No matching execution recorded yet.", "experiment-empty"));
+      return block;
+    }
+    const resultLine = `${text(observed.status, "unknown")} · exit ${text(observed.exit_code)} · digest ${text(observed.output_digest)}`;
+    block.appendChild(create("p", resultLine, "experiment-result"));
+    if (observed.command) block.appendChild(create("code", Array.isArray(observed.command) ? observed.command.join(" ") : observed.command));
+    const output = observed.stdout || observed.stderr;
+    if (output) block.appendChild(create("p", output, "experiment-output"));
+    return block;
   }
 
   function evidenceColumn(label, values) {
@@ -262,8 +292,62 @@
     const unique = (items) => [...new Set(items.filter(Boolean).map(String))];
     renderEvidenceList($("file-evidence"), unique(files), "No file evidence recorded.");
     renderEvidenceList($("command-evidence"), unique(commands).concat(unique(artifacts).map((ref) => `artifact: ${ref}`)), "No command evidence recorded.");
+    renderClaimsList($("claim-evidence"), collectClaims(run, events));
     renderEvidenceList($("session-evidence"), unique([...sessions]), "No sessions recorded.");
-    setText("evidence-count", `${unique(files).length + unique(commands).length + unique(artifacts).length + sessions.size} records`);
+    setText("evidence-count", `${unique(files).length + unique(commands).length + unique(artifacts).length + sessions.size + collectClaims(run, events).length} records`);
+  }
+
+  function collectClaims(run, events) {
+    const claims = [];
+    const add = (value, inheritedRefs, explicit = false) => {
+      if (Array.isArray(value)) { value.forEach((item) => add(item, inheritedRefs, explicit)); return; }
+      if (!value || typeof value !== "object") { if (value) claims.push({ summary: value, refs: inheritedRefs || [] }); return; }
+      const record = mapping(value);
+      if (Array.isArray(record.claims)) add(record.claims, inheritedRefs, true);
+      if (record.claim !== undefined || explicit) {
+        const claim = mapping(record.claim);
+        const summary = claim.summary || claim.claim || claim.text || claim.description || record.summary || record.text || record.description || (typeof record.claim === "string" ? record.claim : "Unlabelled claim");
+        claims.push({ summary, refs: claimRefs(claim).concat(claimRefs(record), inheritedRefs || []) });
+      }
+    };
+    add(run.claims, [], true);
+    allClaimEvidence(run.evidence).forEach((entry) => add(entry, [], true));
+    listValue(events).forEach((event) => add(mapping(event).claim || eventDetails(event).claims, [], true));
+    const seen = new Set();
+    return claims.filter((claim) => { const key = `${String(claim.summary)}|${claim.refs.join(",")}`; if (seen.has(key)) return false; seen.add(key); return true; });
+  }
+
+  function allClaimEvidence(evidence) {
+    const result = [];
+    listValue(evidence).forEach((item) => {
+      const record = mapping(item); const details = mapping(record.details);
+      if (record.claim !== undefined) result.push({ claim: record.claim, ...record });
+      if (details.claim !== undefined) result.push({ claim: details.claim, ...details });
+      if (Array.isArray(record.claims)) result.push(...record.claims);
+      if (Array.isArray(details.claims)) result.push(...details.claims);
+    });
+    return result;
+  }
+
+  function claimRefs(value) {
+    const record = mapping(value); const refs = [];
+    if (record.path) refs.push(`${record.path}${record.line ? `:${record.line}` : ""}`);
+    if (record.command) refs.push(`command=${record.command}`);
+    if (record.artifact_ref) refs.push(`artifact=${record.artifact_ref}`);
+    listValue(record.references || record.evidence).forEach((item) => refs.push(...claimRefs(item)));
+    return refs;
+  }
+
+  function renderClaimsList(node, claims) {
+    clear(node);
+    if (!claims.length) { node.appendChild(create("p", "No claims recorded.", "empty-state")); return; }
+    claims.forEach((claim) => {
+      const record = create("div", undefined, "evidence-record claim-record");
+      record.appendChild(create("strong", claim.summary));
+      if (claim.refs.length) record.appendChild(create("span", `References: ${claim.refs.join(" · ")}`));
+      else record.appendChild(create("span", "No supporting reference recorded."));
+      node.appendChild(record);
+    });
   }
 
   function renderEvidenceList(node, values, empty) {
@@ -285,8 +369,9 @@
     const payload = { actor, timestamp, patch_digest: patch.digest };
     try {
       const endpoint = action === "request-diagnosis" ? ACTION_ENDPOINTS.diagnosis : ACTION_ENDPOINTS[action];
-      const result = await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify(payload) });
-      currentRun = result; render(currentRun, currentEvents); announce(`Server accepted ${action.replaceAll("-", " ")}.`);
+      await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify(payload) });
+      await loadRun();
+      announce(`Server accepted ${action.replaceAll("-", " ")}; snapshot and events refreshed.`);
     } catch (error) { setText("patch-action-status", `Action not accepted: ${error.message}`); announce(`Action not accepted: ${error.message}`); }
   }
 
@@ -294,8 +379,9 @@
     if (!currentRun || !currentRun.run_id) return;
     const input = snapshotInput(currentRun); const patch = mapping(currentRun.patch); const plan = mapping(currentRun.verification).plan || {};
     try {
-      const result = await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}/verify`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ original_failure_command: plan.original_failure_command || input.command, regression_test: plan.regression_test || patch.regression_test || input.command, relevant_tests: listValue(plan.relevant_tests), broader_suite: plan.broader_suite }) });
-      currentRun = result; render(currentRun, currentEvents); announce("Verification request accepted by the server.");
+      await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${ACTION_ENDPOINTS.verify}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ original_failure_command: plan.original_failure_command || input.command, regression_test: plan.regression_test || patch.regression_test || input.command, relevant_tests: listValue(plan.relevant_tests), broader_suite: plan.broader_suite }) });
+      await loadRun();
+      announce("Verification request accepted; snapshot and events refreshed.");
     } catch (error) { announce(`Verification request not accepted: ${error.message}`); }
   }
 

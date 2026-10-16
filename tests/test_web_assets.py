@@ -32,6 +32,8 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn("verification_failed", html)
         self.assertIn("verification_blocked", html)
         self.assertIn("verified", html)
+        self.assertIn("Claims", html)
+        self.assertIn('id="claim-evidence"', html)
         self.assertIn('href="/styles.css"', html)
         self.assertIn('src="/app.js"', html)
 
@@ -39,6 +41,7 @@ class WebAssetContractTests(unittest.TestCase):
         js = (WEB / "app.js").read_text(encoding="utf-8")
         self.assertNotIn("innerHTML", js)
         self.assertIn("textContent", js)
+        self.assertNotIn("TERMINAL_STATES", js)
         for endpoint in (
             "/api/runs/",
             "/events",
@@ -51,6 +54,16 @@ class WebAssetContractTests(unittest.TestCase):
             self.assertIn(endpoint, js)
         for terminal in ("not_reproduced", "blocked", "verification_failed", "verified"):
             self.assertIn(terminal, js)
+        self.assertIn('if (state === "blocked") return stage === "triage" ? "Complete" : stage === "reproduction" ? "Blocked" : "Pending";', js)
+        self.assertIn('if (state === "verification_blocked") return stage === "verification" ? "Blocked" : index < 5 ? "Complete" : "Pending";', js)
+        self.assertIn("run.experiments", js)
+        self.assertIn("hypothesis.experiment", js)
+        self.assertIn("renderExperiment", js)
+        self.assertIn("collectClaims", js)
+        self.assertIn("renderClaimsList", js)
+        self.assertIn("renderReproduction({ state: \"created\", input: {} }, []);", js)
+        self.assertIn("renderVerification({ state: \"created\", verification: null });", js)
+        self.assertGreaterEqual(js.count("await loadRun();"), 2)
 
     def test_css_has_responsive_and_reduced_motion_hooks(self):
         css = (WEB / "styles.css").read_text(encoding="utf-8")
@@ -58,6 +71,9 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn("prefers-reduced-motion", css)
         self.assertIn(":focus-visible", css)
         self.assertIn("overflow", css)
+        for stage_class in ("stage-active", "stage-complete", "stage-blocked", "stage-failed"):
+            self.assertIn(stage_class, css)
+        self.assertNotIn(".is-active", css)
 
 
 class StaticWebServingTests(unittest.TestCase):
