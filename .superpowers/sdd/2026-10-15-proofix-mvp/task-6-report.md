@@ -93,3 +93,27 @@ Complete.
 
 - Dependency/runtime inspection is deliberately limited to the fixed Python version vocabulary; unsupported runtime managers are blocked.
 - Git binary patches remain unsupported; textual rename, mode, quoted-path, and standard metadata forms are covered.
+
+## Fix round 3
+
+### Status
+
+Complete.
+
+### Changes
+
+- Made orchestrator approval reconstruct the proposal exclusively from the persisted current run, require an explicit matching digest, verify the persisted run binding, and reject missing/stale/mismatched approval inputs.
+- Added robust parsing for Git-generated unquoted space-containing `diff --git` headers while retaining quoted-path, rename, mode-only, scope, and file-header validation.
+- Recomputed proposal file scope from diff content during approval and verification, rejecting mutable in-memory or persisted `files` tampering before patch application.
+- Added regressions for approval restart/replay binding, real Git unquoted-space renames, and tampered proposal scope.
+
+### Exact checks and results
+
+- `PYTHONPATH=src python -m unittest tests.test_experiments tests.test_patches tests.test_verification tests.test_orchestrator -v`: passed; 33 focused tests ran successfully.
+- `make test`: passed; 85 tests ran successfully.
+- `PYTHONPATH=src python -m compileall -q src tests`: passed.
+- `git diff --check`: passed.
+
+### Concerns
+
+- Git binary patches remain unsupported; textual rename, mode, quoted-path, unquoted-space, and standard metadata forms are covered.
