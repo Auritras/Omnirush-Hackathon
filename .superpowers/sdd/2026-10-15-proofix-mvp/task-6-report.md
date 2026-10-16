@@ -62,3 +62,34 @@ Complete.
 
 - The guarded command vocabulary intentionally supports a narrow Python test-module and common build-target subset; unsupported runtimes/targets are blocked rather than executed.
 - Syntax validation remains limited to changed Python files; other runtimes require configured verification commands.
+
+## Fix round 2
+
+### Status
+
+Complete.
+
+### Commit
+
+`49c8b75` — `fix: close task 6 approval and diff gaps`
+
+### Changes
+
+- Restricted dependency/runtime experiments to read-only `python --version`, `python -V`, and `python -m pip --version`; side-effecting modules and install commands are rejected before execution.
+- Required approval callers to provide the current proposal and digest, enforced exact run binding in approval/verification, and removed the unbound `is_patch_approved` bypass.
+- Validated actor and canonical UTC timestamps for rejection, diagnosis-request, and return-to-diagnosis audit actions.
+- Added quoted/space-containing Git path parsing and support for pure rename and mode-only metadata diffs.
+- Persisted reject/request/recovery decisions in the patch record, transitioned rejected proposals back to diagnosis, and verified replay does not reopen approval.
+- Recomputed persisted and in-memory patch digests and file scope before approval or verification; tampered proposals now produce bounded verification-blocked evidence.
+
+### Exact checks and results
+
+- `PYTHONPATH=src python -m unittest tests.test_experiments tests.test_patches tests.test_verification -v`: passed; 17 focused tests ran successfully.
+- `make test`: passed; 82 tests ran successfully.
+- `PYTHONPATH=src python -m compileall -q src tests`: passed.
+- `git diff --check`: passed.
+
+### Concerns
+
+- Dependency/runtime inspection is deliberately limited to the fixed Python version vocabulary; unsupported runtime managers are blocked.
+- Git binary patches remain unsupported; textual rename, mode, quoted-path, and standard metadata forms are covered.
