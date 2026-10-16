@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import unittest
 
 
@@ -37,7 +39,7 @@ class ProofFixPluginContractTests(unittest.TestCase):
         self.assertNotRegex(self.source, r"https?://[^\"']+\$\{")
 
     def test_operation_arguments_are_validated_and_skill_records_boundaries(self):
-        for marker in ("assertRunId", "assertActor", "assertDigest", "assertObject", "assertFormat"):
+        for marker in ("assertRunId", "assertActor", "assertDigest", "assertObject", "assertFormat", "assertTimeout", "assertCommand", "assertScopePaths", "assertTimestamp"):
             self.assertIn(marker, self.source)
         for phrase in (
             "read-only",
@@ -58,6 +60,64 @@ class ProofFixPluginContractTests(unittest.TestCase):
         self.assertIn("\ntest:", makefile)
         self.assertIn("make test", dockerfile)
         self.assertIn("python:3.12", dockerfile)
+
+    def test_typescript_runtime_executes_exact_plugin_validation_rules_when_available(self):
+        bun = shutil.which("bun")
+        node = shutil.which("node")
+        runtime = None
+        prefix = []
+        if bun is not None:
+            try:
+                usable = subprocess.run([bun, "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            except OSError:
+                usable = None
+            if usable is not None and usable.returncode == 0:
+                runtime = bun
+        if runtime is None and node is not None:
+            runtime = node
+            prefix = ["--experimental-strip-types", "--input-type=module"]
+        if runtime is None:
+            self.skipTest("no usable Bun or Node TypeScript runtime; source contract checks still run")
+        script = r'''
+import { operations } from "./.opencode/plugins/proofix.ts";
+
+const validPlan = {
+  original_failure_command: "python -m unittest tests.test_parser",
+  regression_test: "python -m unittest tests.test_parser",
+  relevant_tests: [],
+  scope_files: ["parser.py"],
+  timeout_seconds: 30,
+};
+const cases = [
+  ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, timeout_seconds: Infinity } }],
+  ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, timeout_seconds: NaN } }],
+  ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, timeout_seconds: 301 } }],
+  ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, relevant_tests: Array(65).fill("python -m unittest tests.test_parser") } }],
+  ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, scope_files: ["../parser.py"] } }],
+  ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, scope_files: ["/tmp/parser.py"] } }],
+  ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, original_failure_command: "python -m unittest tests.test_parser; rm -rf /" } }],
+  ["proofix.approve_patch", { run_id: "run-validation", actor: "operator", timestamp: "2026-02-30T00:00:00Z", patch_digest: "sha256:" + "a".repeat(64) }],
+  ["proofix.approve_patch", { run_id: "run-validation", actor: "operator", timestamp: "2026-01-01T00:00:00+00:00", patch_digest: "sha256:" + "a".repeat(64) }],
+  ["proofix.start_run", { repository_path: "/tmp/repo", command: "python -m unittest tests.test_parser", failure_text: "failure", constraints: Array(17).fill("x") }],
+  ["proofix.start_run", { repository_path: "/tmp/repo", command: "python -m unittest tests.test_parser", failure_text: "x".repeat(4097) }],
+];
+for (const [name, args] of cases) {
+  let rejected = false;
+  try { await operations[name](args); } catch (_) { rejected = true; }
+  if (!rejected) throw new Error(`validation accepted invalid ${name}`);
+}
+'''
+        result = subprocess.run([runtime, *prefix, "-e", script], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_plugin_type_syntax_check_when_node_supports_type_stripping(self):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node is unavailable; source contract checks still run")
+        result = subprocess.run([node, "--experimental-strip-types", "--check", str(PLUGIN)], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if result.returncode != 0 and "Unexpected identifier 'JsonObject'" in result.stderr:
+            self.skipTest("node cannot type-strip during --check; use node execution check instead")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

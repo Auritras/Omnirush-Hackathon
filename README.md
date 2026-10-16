@@ -45,11 +45,11 @@ The local server entry point is started with:
 make run
 ```
 
-The fixture-backed demo starts the same localhost server with the checked-in
-broken-parser repository and recorded OmniRush responses. It is clearly
-labeled `recorded/demo`; every client intake override is ignored, including
-the repository path, command, failure text, constraints, GitHub references,
-branch/commit metadata, and session configuration:
+The fixture-backed demo starts the same localhost server with recorded
+OmniRush responses. `make demo` starts the server only; it does not create a
+run and the dashboard does not contain an intake form. Create and advance a
+run through the localhost API, then load that existing run in the dashboard
+with `?run=RUN_ID`:
 
 ```sh
 make demo
@@ -61,17 +61,11 @@ To restore the intentionally failing fixture after an experiment, run:
 make fixture-reset
 ```
 
-Then open `http://127.0.0.1:8000/` in a browser. Select the supplied
-`broken-parser-repo` fixture in the dashboard, start the recorded run, run the
-failing command, and observe the reproduction evidence. Review the root-cause
-patch, explicitly approve it with the displayed digest, observe verification,
-and export both Markdown and JSON reports from the dashboard. The server runs
-the command and verification in disposable workspaces; the source working tree
-must remain unchanged.
-
 For the complete reproduction path, the fixture needs to be a standalone Git
 worktree. The checked-in fixture is intentionally kept inside this project
-checkout, so make a disposable copy before starting the server:
+checkout, so make a disposable copy before starting the server. The following
+commands start the server, create a recorded run, and advance it through
+reproduction and diagnosis:
 
 ```sh
 DEMO_FIXTURE=$(mktemp -d)
@@ -87,8 +81,33 @@ PYTHONPATH=src python -m proofix.cli run \
   --data-root .proofix-data
 ```
 
-Use the dashboard/API flow above against this server, then remove the
-temporary directory after exporting the reports.
+In another terminal, create the run and keep its ID:
+
+```sh
+RUN_JSON=$(curl -fsS -X POST http://127.0.0.1:8000/api/runs \
+  -H 'Content-Type: application/json' \
+  -d "{\"repository_path\":\"$DEMO_FIXTURE\",\"command\":\"python -m unittest discover -s tests -v\",\"failure_text\":\"ValueError: too many values to unpack (expected 2)\"}")
+RUN_ID=$(printf '%s' "$RUN_JSON" | python -c 'import json,sys; print(json.load(sys.stdin)["run_id"])')
+curl -fsS -X POST "http://127.0.0.1:8000/api/runs/$RUN_ID/reproduce" \
+  -H 'Content-Type: application/json' -d '{}'
+curl -fsS -X POST "http://127.0.0.1:8000/api/runs/$RUN_ID/diagnose" \
+  -H 'Content-Type: application/json' -d '{}'
+```
+
+Open `http://127.0.0.1:8000/?run=$RUN_ID` to inspect the authoritative
+snapshot and events. Submit the proposed unified diff to
+`POST /api/runs/$RUN_ID/propose` with `{"diff":"...","scope":["parser.py"]}`.
+Read the returned `patch.digest`, then approve through the dashboard's
+**Approve patch** control (or `POST /api/runs/$RUN_ID/approve` with
+`actor`, canonical UTC `timestamp`, and `patch_digest`). After approval, submit
+verification through `POST /api/runs/$RUN_ID/verify` with
+`original_failure_command`, `regression_test`, and optional test/scope fields;
+then use the dashboard's **Refresh** control to display the recorded checks.
+Finally use **Export .md** and **Export .json**
+or `POST /api/runs/$RUN_ID/export` with `{"format":"markdown"}` and
+`{"format":"json"}`. The server runs commands and verification in disposable
+workspaces; the source working tree must remain unchanged. Remove
+`$DEMO_FIXTURE` after exporting reports.
 
 Both commands run through the source checkout (`PYTHONPATH=src`) rather than
 requiring a global ProofFix installation. The server binds to localhost by

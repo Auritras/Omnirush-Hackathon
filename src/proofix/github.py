@@ -10,8 +10,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
+import re
+import signal
 import shutil
 import subprocess
+import threading
+import time
 from typing import Any, Callable, Sequence
 
 from .redaction import redact_text
@@ -37,6 +42,12 @@ class GitHubRead:
     command: tuple[str, ...] = ()
     raw_size: int = 0
     truncated: bool = False
+    stdout_size: int = 0
+    stderr_size: int = 0
+    timed_out: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "command", tuple(_safe_command_item(str(item)) for item in self.command))
 
     @property
     def ok(self) -> bool:
@@ -48,9 +59,12 @@ class GitHubRead:
             "data": self.data,
             "next_steps": list(self.next_steps),
             "error": self.error,
-            "command": list(self.command),
+            "command": [_safe_command_item(str(item)) for item in self.command],
             "raw_size": self.raw_size,
             "truncated": self.truncated,
+            "stdout_size": self.stdout_size,
+            "stderr_size": self.stderr_size,
+            "timed_out": self.timed_out,
         }
 
 
@@ -63,7 +77,7 @@ class GitHubReader:
         *,
         max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
-        runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+        runner: Callable[..., Any] | None = None,
     ) -> None:
         if not isinstance(gh_path, str) or not gh_path or "\x00" in gh_path:
             raise ValueError("gh_path must be non-empty text")
@@ -118,7 +132,7 @@ class GitHubReader:
     read_actions_logs = actions_logs
 
     def _read(self, command: Sequence[str], *, json_output: bool) -> GitHubRead:
-        safe_command = tuple(str(item) for item in command)
+        safe_command = tuple(_safe_command_item(str(item)) for item in command)
         if shutil.which(self.gh_path) is None:
             return GitHubRead(
                 "blocked",
@@ -127,14 +141,12 @@ class GitHubReader:
                 command=safe_command,
             )
         try:
-            runner = self._runner or subprocess.run
-            completed = runner(
+            runner = self._runner or subprocess.Popen
+            captured = _run_bounded(
+                runner,
                 list(command),
-                check=False,
-                capture_output=True,
-                text=True,
-                shell=False,
-                timeout=self.timeout_seconds,
+                max_output_bytes=self.max_output_bytes,
+                timeout_seconds=self.timeout_seconds,
             )
         except FileNotFoundError:
             return GitHubRead("blocked", next_steps=("Install the GitHub CLI (gh) and retry the explicit GitHub read.",), error="GitHub CLI is unavailable", command=safe_command)
@@ -143,37 +155,52 @@ class GitHubReader:
         except OSError:
             return GitHubRead("blocked", next_steps=("Check local GitHub CLI permissions and retry the read.",), error="GitHub CLI could not be started", command=safe_command)
 
-        stdout = completed.stdout if isinstance(completed.stdout, str) else ""
-        stderr = completed.stderr if isinstance(completed.stderr, str) else ""
-        bounded, raw_size, truncated = _bounded(stdout, self.max_output_bytes)
-        if completed.returncode != 0:
-            next_steps = _next_steps(stderr)
-            return GitHubRead(
-                "blocked",
-                next_steps=next_steps,
-                error="GitHub CLI read was not successful",
-                command=safe_command,
-                raw_size=raw_size,
-                truncated=truncated,
-            )
-        if truncated:
+        stdout = captured.stdout
+        stderr = captured.stderr
+        raw_size = captured.stdout_size + captured.stderr_size
+        if captured.truncated:
+            if captured.timed_out:
+                return GitHubRead(
+                    "blocked",
+                    next_steps=("Retry the GitHub read when the network is available.",),
+                    error="GitHub CLI read timed out",
+                    command=safe_command,
+                    raw_size=raw_size,
+                    truncated=True,
+                    stdout_size=captured.stdout_size,
+                    stderr_size=captured.stderr_size,
+                    timed_out=True,
+                )
+            reason = "GitHub output exceeded the configured bound"
             return GitHubRead(
                 "blocked",
                 next_steps=("Narrow the GitHub read or use a bounded fixture before retrying.",),
-                error="GitHub output exceeded the configured bound",
+                error=reason,
                 command=safe_command,
                 raw_size=raw_size,
                 truncated=True,
+                stdout_size=captured.stdout_size,
+                stderr_size=captured.stderr_size,
             )
-        cleaned = _redact_value(bounded)
+        if captured.returncode != 0:
+            return GitHubRead(
+                "blocked",
+                next_steps=_next_steps(stderr),
+                error="GitHub CLI read was not successful",
+                command=safe_command,
+                raw_size=raw_size,
+                stdout_size=captured.stdout_size,
+                stderr_size=captured.stderr_size,
+            )
+        cleaned = _redact_value(stdout)
         if json_output:
             try:
                 data = json.loads(cleaned, parse_constant=_reject_constant)
             except (TypeError, ValueError):
-                return GitHubRead("error", next_steps=("Retry the GitHub read and inspect the CLI version/output format.",), error="GitHub CLI returned malformed JSON", command=safe_command, raw_size=raw_size)
+                return GitHubRead("error", next_steps=("Retry the GitHub read and inspect the CLI version/output format.",), error="GitHub CLI returned malformed JSON", command=safe_command, raw_size=raw_size, stdout_size=captured.stdout_size, stderr_size=captured.stderr_size)
         else:
             data = cleaned
-        return GitHubRead("ok", data=data, command=safe_command, raw_size=raw_size)
+        return GitHubRead("ok", data=data, command=safe_command, raw_size=raw_size, stdout_size=captured.stdout_size, stderr_size=captured.stderr_size)
 
 
 def _repository(value: Any) -> str:
@@ -182,7 +209,7 @@ def _repository(value: Any) -> str:
     parts = value.split("/")
     if len(parts) != 2 or any(not part or part in {".", ".."} for part in parts) or any(ch.isspace() for ch in value):
         raise ValueError("repository must be an owner/name reference")
-    if any(ch in value for ch in "$;&|`<>\\\"'"):
+    if _is_absolute_identifier(value) or ".." in value or any(ch in value for ch in "$;&|`<>\\\"'") or _TOKEN_SHAPE.search(value):
         raise ValueError("repository contains unsafe characters")
     return value
 
@@ -191,17 +218,148 @@ def _identifier(value: Any, label: str) -> str:
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         raise ValueError(f"{label} identifier must be text or an integer")
     text = str(value)
-    if not text or len(text) > 128 or any(ch.isspace() for ch in text) or any(ch in text for ch in "$;&|`<>\\\"'") or text.startswith("-"):
+    if (
+        not text
+        or len(text) > 128
+        or any(ch.isspace() for ch in text)
+        or any(ch in text for ch in "/\\")
+        or ".." in text
+        or text.startswith(("-", "."))
+        or _is_absolute_identifier(text)
+        or any(ch in text for ch in "$;&|`<>\\\"'")
+        or _TOKEN_SHAPE.search(text)
+    ):
         raise ValueError(f"{label} identifier contains unsafe characters")
     return text
 
 
-def _bounded(value: str, limit: int) -> tuple[str, int, bool]:
-    encoded = value.encode("utf-8", errors="replace")
-    if len(encoded) <= limit:
-        return value, len(encoded), False
-    bounded = encoded[:limit].decode("utf-8", errors="ignore")
-    return bounded, len(encoded), True
+_TOKEN_SHAPE = re.compile(r"(?i)(?:gh[pousr]_[a-z0-9_-]{8,}|github_pat_[a-z0-9_-]{8,}|(?:token|secret|api[_-]?key)[=:][^\s]+)")
+
+
+def _is_absolute_identifier(value: str) -> bool:
+    return value.startswith(("/", "\\")) or bool(re.match(r"^[A-Za-z]:[\\/]", value))
+
+
+def _safe_command_item(value: str) -> str:
+    cleaned = redact_text(value)[0]
+    if _TOKEN_SHAPE.search(cleaned):
+        return "[REDACTED]"
+    return cleaned
+
+
+@dataclass
+class _BoundedProcessResult:
+    returncode: int
+    stdout: str
+    stderr: str
+    stdout_size: int
+    stderr_size: int
+    truncated: bool
+    timed_out: bool
+
+
+def _run_bounded(
+    runner: Callable[..., Any],
+    command: list[str],
+    *,
+    max_output_bytes: int,
+    timeout_seconds: float,
+) -> _BoundedProcessResult:
+    """Run a CLI while hard-capping both pipes at the process boundary.
+
+    Reader threads continuously drain both pipes so a noisy CLI cannot block on
+    a full pipe. Once either stream crosses its cap, the process group is
+    terminated and only the bounded prefixes are retained.
+    """
+
+    process = runner(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=False,
+        start_new_session=True,
+    )
+    streams: dict[str, dict[str, Any]] = {
+        "stdout": {"pipe": process.stdout, "data": bytearray(), "size": 0, "overflow": False},
+        "stderr": {"pipe": process.stderr, "data": bytearray(), "size": 0, "overflow": False},
+    }
+    overflow = threading.Event()
+
+    def drain(record: dict[str, Any]) -> None:
+        pipe = record["pipe"]
+        try:
+            while True:
+                chunk = pipe.read(65536)
+                if not chunk:
+                    return
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8", errors="replace")
+                record["size"] += len(chunk)
+                remaining = max_output_bytes - len(record["data"])
+                if remaining > 0:
+                    record["data"].extend(chunk[:remaining])
+                if record["size"] > max_output_bytes:
+                    record["overflow"] = True
+                    overflow.set()
+                    return
+        finally:
+            try:
+                pipe.close()
+            except OSError:
+                pass
+
+    threads = [threading.Thread(target=drain, args=(record,), daemon=True) for record in streams.values()]
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + timeout_seconds
+    timed_out = False
+    while process.poll() is None:
+        if overflow.is_set():
+            _terminate_process(process)
+            break
+        if time.monotonic() >= deadline:
+            timed_out = True
+            _terminate_process(process)
+            break
+        time.sleep(0.005)
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        _kill_process(process)
+        process.wait(timeout=1)
+    for thread in threads:
+        thread.join(timeout=1)
+    stdout = bytes(streams["stdout"]["data"]).decode("utf-8", errors="replace")
+    stderr = bytes(streams["stderr"]["data"]).decode("utf-8", errors="replace")
+    return _BoundedProcessResult(
+        returncode=process.returncode if process.returncode is not None else 1,
+        stdout=stdout,
+        stderr=stderr,
+        stdout_size=streams["stdout"]["size"],
+        stderr_size=streams["stderr"]["size"],
+        truncated=timed_out or overflow.is_set(),
+        timed_out=timed_out,
+    )
+
+
+def _terminate_process(process: Any) -> None:
+    try:
+        if os.name == "posix" and getattr(process, "pid", None):
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            process.terminate()
+    except (OSError, ProcessLookupError):
+        pass
+
+
+def _kill_process(process: Any) -> None:
+    try:
+        if os.name == "posix" and getattr(process, "pid", None):
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except (OSError, ProcessLookupError):
+        pass
 
 
 def _redact_value(value: Any, key: str = "") -> Any:
