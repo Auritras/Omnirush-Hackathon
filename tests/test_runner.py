@@ -3,6 +3,7 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import sys
 import time
@@ -66,6 +67,9 @@ class RunnerTests(unittest.TestCase):
             commands = (
                 ["sh", "-c", f"touch {marker}"],
                 ["bash", "-c", f"touch {marker}"],
+                ["sh", "-ce", f"touch {marker}"],
+                ["bash", "-ec", f"touch {marker}"],
+                ["bash", "-xec", f"touch {marker}"],
                 ["python", "-c", f"open({str(marker)!r}, 'w').write('x')"],
                 ["node", "-e", f"require('fs').writeFileSync({str(marker)!r}, 'x')"],
                 "python script.py > escaped.txt",
@@ -90,10 +94,26 @@ class RunnerTests(unittest.TestCase):
                 [f"./{versioned}", "-c", f"open({str(marker)!r}, 'w').write('versioned')"],
                 [f"./{versioned}", "-cpass"],
             )
-            shutil.copy2(sys.executable, workspace / versioned)
-            shutil.copy2(sys.executable, workspace / "custom-runner")
+            versioned_path = workspace / versioned
+            custom_path = workspace / "custom-runner"
+            shutil.copy2(sys.executable, versioned_path)
+            shutil.copy2(sys.executable, custom_path)
             (workspace / versioned).chmod(0o755)
             (workspace / "custom-runner").chmod(0o755)
+            subprocess.run(
+                [str(versioned_path), "-c", f"open({str(marker)!r}, 'w').write('versioned')"],
+                cwd=workspace,
+                check=True,
+            )
+            self.assertEqual(marker.read_text(encoding="utf-8"), "versioned")
+            marker.unlink()
+            subprocess.run(
+                [str(custom_path), "-c", f"open({str(marker)!r}, 'w').write('custom')"],
+                cwd=workspace,
+                check=True,
+            )
+            self.assertEqual(marker.read_text(encoding="utf-8"), "custom")
+            marker.unlink()
             commands += (
                 ("./custom-runner", "-e", f"open({str(marker)!r}, 'w').write('custom')"),
                 ("./custom-runner", "-cpass"),

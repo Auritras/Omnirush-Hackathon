@@ -335,8 +335,15 @@ def _reject_command_string_forms(executable: str, arguments: Sequence[str], poli
             raise ValueError("command-string execution is not allowed")
         if argument == "-":
             raise ValueError("stdin command execution is not allowed")
+        if is_shell and _is_bundled_shell_command_flag(argument):
+            raise ValueError("command-string execution is not allowed")
         if argument.startswith(("-c", "--command=")) or (is_interpreter and argument.startswith(("-e", "--eval=", "--execute=", "--print="))):
             raise ValueError("command-string execution is not allowed")
+
+
+def _is_bundled_shell_command_flag(argument: str) -> bool:
+    """Recognize ``sh -ec``/``bash -xec`` without treating tool flags alike."""
+    return argument.startswith("-") and not argument.startswith("--") and "c" in argument[1:]
 
 
 def _resolve_executable(executable: str, name: str, workspace: Path, root: Path) -> str | None:
