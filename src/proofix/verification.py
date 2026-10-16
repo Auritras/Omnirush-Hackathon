@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 from typing import Any, Sequence
 
+from .experiments import validate_guarded_command
 from .models import CheckResult
 from .patches import apply_approved_patch, is_patch_approved
 from .runner import CommandPolicy, run_command
@@ -62,6 +63,7 @@ def verify_patch(
     workspace: os.PathLike[str] | str,
     runner: Any = run_command,
     plan: VerificationPlan | None = None,
+    run_id: str | None = None,
 ) -> VerificationSummary:
     """Apply an approved patch to a fresh copy and execute checks in order."""
 
@@ -70,17 +72,23 @@ def verify_patch(
     source = Path(workspace).expanduser().resolve(strict=False)
     if not source.exists() or not source.is_dir():
         return VerificationSummary("verification_blocked", [_blocked_check("patch_application", "workspace does not exist")])
-    if not is_patch_approved(patch):
+    if not is_patch_approved(patch, run_id=run_id):
         return VerificationSummary("verification_blocked", [_blocked_check("patch_application", "patch has not been explicitly approved")])
 
-    temporary_root = Path(tempfile.mkdtemp(prefix="proofix-verification-"))
+    try:
+        temporary_root = Path(tempfile.mkdtemp(prefix="proofix-verification-"))
+    except Exception as exc:
+        return VerificationSummary("verification_blocked", [_blocked_check("patch_application", _bounded_error(exc))])
     verification_workspace = temporary_root / "workspace"
     try:
-        shutil.copytree(source, verification_workspace, symlinks=False, ignore=shutil.ignore_patterns(".proofix-artifacts"))
+        try:
+            shutil.copytree(source, verification_workspace, symlinks=False, ignore=shutil.ignore_patterns(".proofix-artifacts"))
+        except Exception as exc:
+            return VerificationSummary("verification_blocked", [_blocked_check("patch_application", _bounded_error(exc))])
         try:
             apply_approved_patch(patch, verification_workspace)
-        except ValueError as exc:
-            return VerificationSummary("verification_blocked", [_blocked_check("patch_application", str(exc))])
+        except Exception as exc:
+            return VerificationSummary("verification_blocked", [_blocked_check("patch_application", _bounded_error(exc))])
 
         checks: list[CheckResult] = []
         command_checks = [
@@ -96,20 +104,30 @@ def verify_patch(
             if check.status != "passed":
                 return VerificationSummary("verification_blocked" if check.status == "blocked" else "verification_failed", checks)
 
-        final_check = _diff_scope_syntax_check(patch, verification_workspace, plan)
+        try:
+            final_check = _diff_scope_syntax_check(patch, verification_workspace, plan)
+        except Exception as exc:
+            final_check = _blocked_check("diff_scope_syntax", _bounded_error(exc), "git diff --check")
         checks.append(final_check)
-        return VerificationSummary("verified" if final_check.status == "passed" else "verification_failed", checks)
+        return VerificationSummary("verified" if final_check.status == "passed" else "verification_blocked" if final_check.status == "blocked" else "verification_failed", checks)
     finally:
         shutil.rmtree(temporary_root, ignore_errors=True)
 
 
 def _run_check(name: str, command: str | Sequence[str], workspace: Path, runner: Any, timeout: float) -> CheckResult:
+    try:
+        validate_guarded_command(command, workspace, "verification")
+    except Exception as exc:
+        return _blocked_check(name, _bounded_error(exc), command)
     policy = CommandPolicy(workspace_root=workspace, artifact_dir=workspace / ".proofix-artifacts", timeout_seconds=timeout)
     target = getattr(runner, "run_command", runner)
     try:
-        result = target(command, workspace, policy=policy)
-    except TypeError:
-        result = target(command, workspace)
+        try:
+            result = target(command, workspace, policy=policy)
+        except TypeError:
+            result = target(command, workspace)
+    except Exception as exc:
+        return _blocked_check(name, _bounded_error(exc), command)
     exit_code = getattr(result, "exit_code", getattr(result, "returncode", None))
     if bool(getattr(result, "blocked", False)) or bool(getattr(result, "timed_out", getattr(result, "timeout", False))):
         status = "blocked"
@@ -136,8 +154,8 @@ def _diff_scope_syntax_check(patch: Any, workspace: Path, plan: VerificationPlan
     details: dict[str, Any] = {}
     try:
         diff_result = subprocess.run(["git", "diff", "--check"], cwd=workspace, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-    except OSError as exc:
-        return CheckResult(name="diff_scope_syntax", status="blocked", command="git diff --check", details={"error": str(exc)})
+    except Exception as exc:
+        return CheckResult(name="diff_scope_syntax", status="blocked", command="git diff --check", details={"error": _bounded_error(exc)})
     if diff_result.returncode != 0:
         return CheckResult(name="diff_scope_syntax", status="failed", command="git diff --check", exit_code=diff_result.returncode, details={"stderr": diff_result.stderr, "stdout": diff_result.stdout})
 
@@ -168,9 +186,13 @@ def _diff_scope_syntax_check(patch: Any, workspace: Path, plan: VerificationPlan
     return CheckResult(name="diff_scope_syntax", status="passed", command="git diff --check; syntax", exit_code=0, details=details)
 
 
-def _blocked_check(name: str, reason: str) -> CheckResult:
-    return CheckResult(name=name, status="blocked", command=None, details={"blocked_reason": reason})
+def _blocked_check(name: str, reason: str, command: str | Sequence[str] | None = None) -> CheckResult:
+    return CheckResult(name=name, status="blocked", command=_display_command(command) if command is not None else None, details={"blocked_reason": reason, "error": reason})
 
 
 def _display_command(command: str | Sequence[str]) -> str:
     return command if isinstance(command, str) else " ".join(str(item) for item in command)
+
+
+def _bounded_error(error: BaseException) -> str:
+    return str(error).replace("\x00", "")[:4096] or error.__class__.__name__

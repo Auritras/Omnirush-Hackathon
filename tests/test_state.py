@@ -79,8 +79,18 @@ class StateTransitionTests(unittest.TestCase):
                 run = RunStore(Path(directory)).create_run({"command": "true"})
                 for target in path:
                     run = transition(run, target, event_kind="orchestrator_step", details={})
+                event_kind = "orchestrator:return_to_diagnosis" if terminal.startswith("verification_") else "agent_claim"
                 with self.assertRaises(DomainError):
-                    transition(run, "diagnosing", event_kind="agent_claim", details={})
+                    transition(run, "diagnosing", event_kind=event_kind, details={}) if event_kind == "agent_claim" else transition(run, "created", event_kind=event_kind, details={})
+
+    def test_verification_failure_and_blocked_states_can_return_to_diagnosis(self):
+        for terminal in ("verification_failed", "verification_blocked"):
+            with tempfile.TemporaryDirectory() as directory:
+                run = RunStore(Path(directory)).create_run({"command": "false"})
+                for target in ("triaging", "reproducing", "reproduced", "diagnosing", "patch_proposed", "awaiting_approval", "applying", "verifying", terminal):
+                    run = transition(run, target, event_kind="orchestrator:step", details={})
+                run = transition(run, "diagnosing", event_kind="orchestrator:return_to_diagnosis", details={"outcome": "diagnosis_requested"})
+                self.assertEqual(run.state, "diagnosing")
 
     def test_invalid_skips_and_agent_status_changes_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

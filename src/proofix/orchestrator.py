@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .intake import IntakeRequest, sanitize_intake
-from .models import DomainError, EventRecord, RunRecord
+from .models import DomainError, EventRecord, PatchProposal, RunRecord
 from .omnirush import OmniRushSessionClient, RecordedSessionClient, run_specialists
 from .redaction import redact_text
 from .reproduction import compare_failure
@@ -146,11 +146,13 @@ class ProofFixOrchestrator:
         run = self.store.get_run(run_id)
         if run.state != "awaiting_approval" or not run.patch:
             raise DomainError(f"patch is not awaiting approval: {run.state}")
-        proposal = self._patches.get(run_id)
+        proposal = self._patches.get(run_id) or self._proposal_from_run(run)
         if proposal is None:
             raise DomainError("patch proposal is unavailable")
         digest = patch_digest or proposal.digest
-        action = approve_patch(run_id, digest, actor, timestamp)
+        current_digest = str(run.patch.get("digest"))
+        action = approve_patch(run_id, digest, actor, timestamp, proposal=proposal, current_digest=current_digest)
+        self._patches[run_id] = proposal
         self._append_transition(run, "applying", "orchestrator:patch_approved", {"stage": "patch", "outcome": "approved", "patch_digest": action.patch_digest, "actor": actor, "timestamp": timestamp})
         current = self.store.get_run(run_id)
         self.store.update_run(replace(current, patch={**current.patch, "approval": action.to_dict()}))
@@ -160,7 +162,10 @@ class ProofFixOrchestrator:
         run = self.store.get_run(run_id)
         if run.state != "awaiting_approval" or not run.patch:
             raise DomainError(f"patch is not awaiting approval: {run.state}")
-        action = reject_patch(run_id, actor, timestamp, digest=str(run.patch.get("digest")))
+        proposal = self._patches.get(run_id) or self._proposal_from_run(run)
+        if proposal is None:
+            raise DomainError("patch proposal is unavailable")
+        action = reject_patch(run_id, actor, timestamp, digest=str(run.patch.get("digest")), proposal=proposal, current_digest=str(run.patch.get("digest")))
         current = self.store.get_run(run_id)
         self.store.update_run(replace(current, patch={**current.patch, "decision": action.to_dict()}))
         self.store.append_event(EventRecord.new(run_id, "orchestrator:patch_rejected", stage="patch", status="rejected", state_before=run.state, details={"outcome": "rejected", "actor": actor, "timestamp": timestamp, "patch_digest": action.patch_digest}))
@@ -171,28 +176,58 @@ class ProofFixOrchestrator:
         if run.state != "awaiting_approval" or not run.patch:
             raise DomainError(f"patch is not awaiting approval: {run.state}")
         current = self.store.get_run(run_id)
+        proposal = self._patches.get(run_id) or self._proposal_from_run(current)
+        if proposal is None:
+            raise DomainError("patch proposal is unavailable")
         decision = {"action": "request_another_diagnosis", "actor": actor, "timestamp": timestamp, "patch_digest": current.patch.get("digest")}
         self.store.update_run(replace(current, patch={**current.patch, "decision": decision}))
-        self.store.append_event(EventRecord.new(run_id, "orchestrator:request_another_diagnosis", stage="patch", status="diagnosis_requested", state_before=run.state, details={"outcome": "diagnosis_requested", "actor": actor, "timestamp": timestamp, "patch_digest": decision["patch_digest"]}))
+        self._append_transition(self.store.get_run(run_id), "diagnosing", "orchestrator:request_another_diagnosis", {"stage": "patch", "outcome": "diagnosis_requested", "actor": actor, "timestamp": timestamp, "patch_digest": decision["patch_digest"]})
+        return self.store.get_run(run_id)
+
+    def return_to_diagnosis(self, run_id: str, actor: str, timestamp: str) -> RunRecord:
+        """Recover a failed/blocked verification while preserving its evidence."""
+        run = self.store.get_run(run_id)
+        if run.state not in {"verification_failed", "verification_blocked"}:
+            raise DomainError(f"run is not recoverable from verification: {run.state}")
+        patch = dict(run.patch or {})
+        patch["approval"] = None
+        patch["recovery"] = {"action": "return_to_diagnosis", "actor": actor, "timestamp": timestamp}
+        self.store.update_run(replace(run, patch=patch))
+        self._append_transition(self.store.get_run(run_id), "diagnosing", "orchestrator:return_to_diagnosis", {"stage": "verification", "outcome": "diagnosis_requested", "actor": actor, "timestamp": timestamp})
         return self.store.get_run(run_id)
 
     def verify_patch(self, run_id: str, plan: VerificationPlan) -> RunRecord:
         run = self.store.get_run(run_id)
         if run.state != "applying":
             raise DomainError(f"patch is not approved for verification: {run.state}")
-        proposal = self._patches.get(run_id)
+        proposal = self._patches.get(run_id) or self._proposal_from_run(run)
         snapshot = self._snapshots.get(run_id)
+        if snapshot is None:
+            snapshot = self.workspace_manager.snapshot_repository(sanitize_intake(run.intake).repository_path)
+            self._snapshots[run_id] = snapshot
         if proposal is None or snapshot is None:
             raise DomainError("approved patch or reproduction snapshot is unavailable")
+        self._patches[run_id] = proposal
         self._append_transition(run, "verifying", "orchestrator:verification_started", {"stage": "verification", "patch_digest": proposal.digest})
         source = getattr(snapshot, "path", getattr(snapshot, "repository", snapshot))
-        summary = verify_patch(proposal, source, self.runner, plan)
+        summary = verify_patch(proposal, source, self.runner, plan, run_id=run_id)
         current = self.store.get_run(run_id)
         self.store.update_run(replace(current, verification=summary.to_dict()))
         target = {"verified": "verified", "verification_failed": "verification_failed", "verification_blocked": "verification_blocked"}[summary.status]
         failed = summary.failed_check
         self._append_transition(self.store.get_run(run_id), target, "orchestrator:verification_result", {"stage": "verification", "outcome": summary.status, "failed_check": failed.name if failed else None})
         return self.store.get_run(run_id)
+
+    def _proposal_from_run(self, run: RunRecord) -> PatchProposal | None:
+        if not isinstance(run.patch, Mapping) or not run.patch.get("digest") or not isinstance(run.patch.get("diff"), str):
+            return None
+        data = {key: value for key, value in run.patch.items() if key in {"schema_version", "digest", "diff_ref", "files", "regression_test", "risk_summary", "verification_plan"}}
+        data.setdefault("schema_version", "1.0")
+        proposal = PatchProposal.from_dict(data)
+        proposal.diff = run.patch["diff"]  # type: ignore[attr-defined]
+        if run.patch.get("approval"):
+            proposal.approval = run.patch["approval"]  # type: ignore[attr-defined]
+        return proposal
 
     def _run_local(self, command: str, snapshot: Any) -> Any:
         workspace = getattr(snapshot, "path", getattr(snapshot, "workspace", snapshot))

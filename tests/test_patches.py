@@ -6,6 +6,7 @@ from proofix.patches import approve_patch, reject_patch, validate_unified_diff
 
 
 GOOD_DIFF = """diff --git a/case.py b/case.py
+index 1234567..89abcde 100644
 --- a/case.py
 +++ b/case.py
 @@ -1 +1 @@
@@ -42,12 +43,21 @@ class PatchTests(unittest.TestCase):
                 approve_patch("run-patch", proposal.digest, "", "2026-10-15T00:00:00Z")
             with self.assertRaises(ValueError):
                 approve_patch("run-patch", proposal.digest, "alice", "")
-            approval = approve_patch("run-patch", proposal.digest, "alice", "2026-10-15T00:00:00Z")
+            approval = approve_patch("run-patch", proposal.digest, "alice", "2026-10-15T00:00:00Z", proposal=proposal, current_digest=proposal.digest)
             self.assertEqual(approval.patch_digest, proposal.digest)
             with self.assertRaises(ValueError):
-                approve_patch("run-patch", proposal.digest, "alice", "2026-10-15T00:00:00Z")
+                approve_patch("run-patch", proposal.digest, "alice", "2026-10-15T00:00:00Z", proposal=proposal, current_digest=proposal.digest)
             with self.assertRaises(ValueError):
-                reject_patch("run-patch", "alice", "2026-10-15T00:00:01Z")
+                reject_patch("run-patch", "alice", "2026-10-15T00:00:01Z", digest=proposal.digest, proposal=proposal, current_digest=proposal.digest)
+
+    def test_approval_rejects_a_digest_from_another_run_proposal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = validate_unified_diff(GOOD_DIFF, root)
+            second = validate_unified_diff(GOOD_DIFF.replace("print('good')", "print('other')"), root)
+            approve_patch("run-one", first.digest, "alice", "2026-10-15T00:00:00Z", proposal=first, current_digest=first.digest)
+            with self.assertRaises(ValueError):
+                approve_patch("run-two", first.digest, "alice", "2026-10-15T00:00:01Z", proposal=second, current_digest=second.digest)
 
     def test_rejection_is_recorded_without_applying_anything(self):
         with tempfile.TemporaryDirectory() as directory:

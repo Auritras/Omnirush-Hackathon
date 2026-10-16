@@ -16,9 +16,6 @@ from .paths import ensure_contained
 
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
-_DIGESTS: dict[str, PatchProposal] = {}
-_STATES: dict[tuple[str, str], str] = {}
-_APPROVED_OBJECTS: dict[int, PatchProposal] = {}
 
 
 @dataclass(frozen=True)
@@ -75,22 +72,31 @@ def validate_unified_diff(
     # raw diff is retained only in memory for the apply/verify gate.
     proposal.diff = diff  # type: ignore[attr-defined]
     proposal.repository_root = root  # type: ignore[attr-defined]
-    _DIGESTS[digest] = proposal
     return proposal
 
 
-def approve_patch(run_id: str, patch_digest: str, actor: str, timestamp: str) -> PatchAction:
+def approve_patch(
+    run_id: str,
+    patch_digest: str,
+    actor: str,
+    timestamp: str,
+    *,
+    proposal: PatchProposal | None = None,
+    current_digest: str | None = None,
+) -> PatchAction:
     _validate_action_inputs(run_id, patch_digest, actor, timestamp)
-    if patch_digest not in _DIGESTS:
-        raise ValueError("patch digest is unknown")
-    key = (run_id, patch_digest)
-    if _STATES.get(key) in {"approved", "rejected"}:
-        raise ValueError("patch approval state is already final")
-    if any(existing_run == run_id and existing_digest != patch_digest for existing_run, existing_digest in _STATES):
-        raise ValueError("run has a different patch digest")
-    _STATES[key] = "approved"
-    _APPROVED_OBJECTS[id(_DIGESTS[patch_digest])] = _DIGESTS[patch_digest]
-    return PatchAction(run_id, "approved", actor, timestamp, patch_digest)
+    if proposal is not None:
+        _validate_proposal(proposal, current_digest)
+        if proposal.digest != patch_digest:
+            raise ValueError("patch digest does not match the current proposal")
+        if isinstance(getattr(proposal, "approval", None), dict) and proposal.approval.get("action") in {"approved", "rejected"}:  # type: ignore[attr-defined]
+            raise ValueError("patch approval state is already final")
+    elif current_digest is not None and patch_digest != current_digest:
+        raise ValueError("patch digest does not match the current proposal")
+    action = PatchAction(run_id, "approved", actor, timestamp, patch_digest)
+    if proposal is not None:
+        proposal.approval = action.to_dict()  # type: ignore[attr-defined]
+    return action
 
 
 def reject_patch(
@@ -98,22 +104,29 @@ def reject_patch(
     actor: str,
     timestamp: str,
     digest: str | None = None,
+    *,
+    proposal: PatchProposal | None = None,
+    current_digest: str | None = None,
 ) -> PatchAction:
     if not isinstance(run_id, str) or not run_id.strip():
         raise ValueError("run ID is required")
     if not isinstance(actor, str) or not actor.strip():
         raise ValueError("approval actor is required")
     _validate_timestamp(timestamp)
-    matching = [(run, patch) for run, patch in _STATES if run == run_id]
-    patch_digest = digest or (matching[-1][1] if matching else None)
-    if patch_digest is not None and patch_digest not in _DIGESTS:
-        raise ValueError("patch digest is unknown")
-    key = (run_id, patch_digest) if patch_digest else None
-    if key is not None and _STATES.get(key) in {"approved", "rejected"}:
-        raise ValueError("patch approval state is already final")
-    if key is not None:
-        _STATES[key] = "rejected"
-    return PatchAction(run_id, "rejected", actor, timestamp, patch_digest)
+    if proposal is not None:
+        _validate_proposal(proposal, current_digest)
+        if digest is not None and digest != proposal.digest:
+            raise ValueError("patch digest does not match the current proposal")
+        digest = proposal.digest
+        if isinstance(getattr(proposal, "approval", None), dict) and proposal.approval.get("action") in {"approved", "rejected"}:  # type: ignore[attr-defined]
+            raise ValueError("patch approval state is already final")
+    elif current_digest is not None and digest != current_digest:
+        raise ValueError("patch digest does not match the current proposal")
+    patch_digest = digest
+    action = PatchAction(run_id, "rejected", actor, timestamp, patch_digest)
+    if proposal is not None:
+        proposal.approval = action.to_dict()  # type: ignore[attr-defined]
+    return action
 
 
 def request_another_diagnosis(run_id: str, actor: str, timestamp: str, digest: str | None = None) -> PatchAction:
@@ -128,11 +141,12 @@ def is_patch_approved(patch: Any, run_id: str | None = None) -> bool:
     digest = getattr(patch, "digest", None) or _digest_for_text(patch)
     if not digest:
         return False
-    if _APPROVED_OBJECTS.get(id(patch)) is not patch:
+    approval = getattr(patch, "approval", None)
+    if not isinstance(approval, dict) or approval.get("action") != "approved" or approval.get("patch_digest") != digest:
         return False
     if run_id is not None:
-        return _STATES.get((run_id, digest)) == "approved"
-    return any(digest == patch_digest and state == "approved" for (_, patch_digest), state in _STATES.items())
+        return approval.get("run_id") == run_id
+    return True
 
 
 def apply_approved_patch(patch: Any, workspace: os.PathLike[str] | str, run_id: str | None = None) -> None:
@@ -141,9 +155,6 @@ def apply_approved_patch(patch: Any, workspace: os.PathLike[str] | str, run_id: 
         raise ValueError("patch has not been explicitly approved")
     diff = getattr(patch, "diff", None)
     if not isinstance(diff, str):
-        digest = getattr(patch, "digest", None)
-        diff = getattr(_DIGESTS.get(digest), "diff", None)
-    if not isinstance(diff, str):
         raise ValueError("patch text is unavailable")
     root = Path(workspace).expanduser().resolve(strict=False)
     if not root.exists() or not root.is_dir():
@@ -151,10 +162,8 @@ def apply_approved_patch(patch: Any, workspace: os.PathLike[str] | str, run_id: 
     source_root = getattr(patch, "repository_root", None)
     if source_root is not None and root == Path(source_root).expanduser().resolve(strict=False):
         raise ValueError("approved patches may only be applied to a disposable workspace")
-    proposal = _DIGESTS.get(getattr(patch, "digest", ""))
-    if proposal is not None:
-        for relative in proposal.files:
-            ensure_contained(root / relative, root)
+    for relative in getattr(patch, "files", []):
+        ensure_contained(root / relative, root)
     try:
         subprocess.run(["git", "apply", "--check", "--", "-"], cwd=root, input=diff, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         subprocess.run(["git", "apply", "--", "-"], cwd=root, input=diff, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
@@ -176,6 +185,14 @@ def _parse_diff(diff: str) -> list[str]:
         old = _normalize_path(header[0], allow_dev_null=True)
         new = _normalize_path(header[1], allow_dev_null=True)
         index += 1
+        while index < len(lines) and not lines[index].startswith(("--- ", "+++ ")):
+            metadata = lines[index]
+            if metadata.startswith(("index ", "old mode ", "new mode ", "new file mode ", "deleted file mode ", "similarity index ", "dissimilarity index ", "rename from ", "rename to ")):
+                index += 1
+                continue
+            if metadata.startswith("Binary files "):
+                raise ValueError("binary patches are not supported")
+            break
         if index + 1 >= len(lines) or not lines[index].startswith("--- ") or not lines[index + 1].startswith("+++ "):
             raise ValueError("unified diff is missing file headers")
         old_header = _normalize_path(lines[index][4:].split("\t", 1)[0], allow_dev_null=True)
@@ -236,7 +253,7 @@ def _normalize_path(value: str, allow_dev_null: bool = False) -> str:
 def _validate_action_inputs(run_id: str, digest: str, actor: str, timestamp: str) -> None:
     if not isinstance(run_id, str) or not run_id.strip():
         raise ValueError("run ID is required")
-    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
         raise ValueError("patch digest is invalid")
     if not isinstance(actor, str) or not actor.strip():
         raise ValueError("approval actor is required")
@@ -257,3 +274,12 @@ def _validate_timestamp(value: str) -> None:
 def _digest_for_text(patch: Any) -> str | None:
     diff = getattr(patch, "diff", None)
     return "sha256:" + hashlib.sha256(diff.encode()).hexdigest() if isinstance(diff, str) else None
+
+
+def _validate_proposal(proposal: PatchProposal, current_digest: str | None) -> None:
+    diff = getattr(proposal, "diff", None)
+    if not isinstance(diff, str):
+        raise ValueError("current proposal does not contain patch text")
+    calculated = "sha256:" + hashlib.sha256(diff.encode("utf-8")).hexdigest()
+    if calculated != proposal.digest or (current_digest is not None and calculated != current_digest):
+        raise ValueError("current proposal digest is invalid or stale")

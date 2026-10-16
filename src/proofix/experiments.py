@@ -11,6 +11,9 @@ import hashlib
 import os
 from pathlib import Path
 import shlex
+import subprocess
+import tarfile
+import tempfile
 from typing import Any, Mapping, Sequence
 
 from .paths import ensure_contained
@@ -39,8 +42,10 @@ _ALIASES = {
     "dependency_inspection": "dependency_runtime_inspection",
     "dependency_runtime": "dependency_runtime_inspection",
     "runtime_inspection": "dependency_runtime_inspection",
-    "regression_test": "proposed_regression_test",
+        "regression_test": "proposed_regression_test",
 }
+_APPROVED_EXECUTABLES = frozenset({"cargo", "dotnet", "go", "make", "mvn", "npm", "pytest", "python", "python3"})
+_APPROVED_BUILD_TARGETS = frozenset({"all", "build", "check", "lint", "test", "tests", "verify"})
 
 
 @dataclass(frozen=True)
@@ -55,6 +60,7 @@ class ExperimentSpec:
     env_value: str | None = None
     instrumentation: Mapping[str, str] = field(default_factory=dict)
     parent_commit: str | None = None
+    regression_test: str | Sequence[str] | None = None
     timeout_seconds: float = 30.0
 
     @property
@@ -87,6 +93,8 @@ class ExperimentResult:
     artifacts: dict[str, str]
     status: str = "completed"
     parent_commit: str | None = None
+    parent_exit_code: int | None = None
+    comparison: dict[str, Any] = field(default_factory=dict)
 
     @property
     def timeout(self) -> bool:
@@ -108,6 +116,8 @@ class ExperimentResult:
             "artifacts": dict(self.artifacts),
             "status": self.status,
             "parent_commit": self.parent_commit,
+            "parent_exit_code": self.parent_exit_code,
+            "comparison": dict(self.comparison),
         }
 
 
@@ -123,10 +133,18 @@ def run_experiment(spec: ExperimentSpec, workspace: os.PathLike[str] | str, runn
         raise ValueError("experiment timeout must be positive")
     if kind == "controlled_environment" and len(spec.controlled_environment) != 1:
         raise ValueError("controlled environment experiments must change exactly one variable")
-    command = _safe_argv(spec.command)
     root = Path(workspace).expanduser().resolve(strict=False)
     if not root.exists() or not root.is_dir():
         raise ValueError("experiment workspace must be an existing directory")
+
+    command_value: str | Sequence[str] = spec.command
+    if kind == "proposed_regression_test":
+        if spec.regression_test is None:
+            raise ValueError("proposed regression experiments require an explicit regression test")
+        command_value = spec.regression_test
+    command = validate_guarded_command(command_value, root, kind)
+    if kind == "parent_commit_comparison" and not spec.parent_commit:
+        raise ValueError("parent-commit comparison requires a parent commit")
 
     before = _snapshot(root)
     touched: set[str] = set()
@@ -153,6 +171,17 @@ def run_experiment(spec: ExperimentSpec, workspace: os.PathLike[str] | str, runn
     stderr = str(getattr(result, "stderr", ""))
     output_digest = "sha256:" + hashlib.sha256((stdout + stderr).encode("utf-8")).hexdigest()
     artifacts = dict(getattr(result, "artifact_refs", getattr(result, "artifacts", {})) or {})
+    parent_result = None
+    if kind == "parent_commit_comparison":
+        parent_result = _run_against_parent(spec.parent_commit or "", command, root, runner, spec.timeout_seconds)
+    comparison = {}
+    if parent_result is not None:
+        comparison = {
+            "current_exit_code": getattr(result, "exit_code", getattr(result, "returncode", None)),
+            "current_output_digest": output_digest,
+            "parent_exit_code": getattr(parent_result, "exit_code", getattr(parent_result, "returncode", None)),
+            "parent_output_digest": _result_digest(parent_result),
+        }
     return ExperimentResult(
         kind=kind,
         hypothesis_id=spec.hypothesis_id,
@@ -168,6 +197,8 @@ def run_experiment(spec: ExperimentSpec, workspace: os.PathLike[str] | str, runn
         artifacts=artifacts,
         status=str(getattr(result, "status", "completed")),
         parent_commit=spec.parent_commit,
+        parent_exit_code=getattr(parent_result, "exit_code", getattr(parent_result, "returncode", None)) if parent_result is not None else None,
+        comparison=comparison,
     )
 
 
@@ -186,6 +217,53 @@ def _safe_argv(command: str | Sequence[str]) -> list[str]:
     if any(item in {"-c", "--command", "--eval", "-e", "--execute", "--print"} or item.startswith(("-c", "--command=", "--eval=", "--execute=", "--print=")) for item in argv[1:]):
         raise ValueError("arbitrary command execution is not an experiment")
     return argv
+
+
+def validate_guarded_command(command: str | Sequence[str], workspace: os.PathLike[str] | str, kind: str = "named_test_or_build") -> list[str]:
+    """Validate the explicit executable and repository target vocabulary.
+
+    In particular, a Python script path is never an accepted experiment or
+    verification target. Tests are named modules below ``tests``/``test``;
+    build tools use a small fixed target vocabulary.
+    """
+    argv = _safe_argv(command)
+    executable = Path(argv[0]).name.casefold()
+    if executable not in _APPROVED_EXECUTABLES or "/" in argv[0] or "\\" in argv[0]:
+        raise ValueError("executable is not in the ProofFix command vocabulary")
+    args = argv[1:]
+    if executable in {"python", "python3"}:
+        if "-m" in args:
+            index = args.index("-m")
+            if index + 1 >= len(args):
+                raise ValueError("Python module target is missing")
+            module = args[index + 1]
+            target_modules = args[index + 2:] if module == "unittest" else [module]
+            allowed_module = module.startswith(("tests.", "test.")) or (module == "unittest" and bool(target_modules) and all(item.startswith(("tests.", "test.")) for item in target_modules))
+            if kind == "dependency_runtime_inspection" and module in {"pip", "setuptools", "venv"}:
+                allowed_module = True
+            if not allowed_module or any("/" in item or "\\" in item for item in target_modules):
+                raise ValueError("Python module target is outside the approved test/runtime vocabulary")
+        elif kind != "dependency_runtime_inspection" or not any(item in {"--version", "-V"} for item in args):
+            raise ValueError("Python script targets are not supported; use a named test module")
+    elif executable == "pytest":
+        targets = [item for item in args if not item.startswith("-")]
+        if not targets or any(not _allowed_repository_target(item) for item in targets):
+            raise ValueError("pytest targets must be repository-relative tests")
+    elif executable == "make":
+        targets = [item for item in args if not item.startswith("-")]
+        if any(item not in _APPROVED_BUILD_TARGETS for item in targets):
+            raise ValueError("make target is not approved")
+    elif executable in {"npm", "cargo", "go", "dotnet", "mvn"}:
+        if not args or not any(item in _APPROVED_BUILD_TARGETS | {"run", "check", "test"} for item in args):
+            raise ValueError("build target is not approved")
+        if any("/" in item or "\\" in item or ".." in Path(item).parts for item in args):
+            raise ValueError("build target path is not contained")
+    return argv
+
+
+def _allowed_repository_target(value: str) -> bool:
+    path = Path(value.replace("\\", "/"))
+    return not path.is_absolute() and ".." not in path.parts and path.parts and path.parts[0] in {"test", "tests"}
 
 
 def _safe_relative(root: Path, relative: str) -> Path:
@@ -217,3 +295,27 @@ def _invoke_runner(runner: Any, command: list[str], workspace: Path, timeout: fl
             return target(command, workspace, policy=policy)
         except TypeError:
             return target(command, workspace)
+
+
+def _run_against_parent(parent_commit: str, command: list[str], workspace: Path, runner: Any, timeout: float) -> Any:
+    try:
+        subprocess.run(["git", "rev-parse", "--verify", f"{parent_commit}^{{commit}}"], cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        with tempfile.TemporaryDirectory(prefix="proofix-parent-") as directory:
+            parent_root = Path(directory) / "workspace"
+            archive = subprocess.run(["git", "archive", "--format=tar", parent_commit], cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            parent_root.mkdir()
+            with tarfile.open(fileobj=__import__("io").BytesIO(archive.stdout), mode="r:") as handle:
+                members = []
+                for member in handle.getmembers():
+                    path = Path(member.name)
+                    if path.is_absolute() or ".." in path.parts:
+                        raise ValueError("parent archive contains an unsafe path")
+                    members.append(member)
+                handle.extractall(parent_root, members=members)
+            return _invoke_runner(runner, command, parent_root, timeout, {})
+    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+        raise ValueError(f"parent-commit comparison is unavailable: {exc}") from exc
+
+
+def _result_digest(result: Any) -> str:
+    return "sha256:" + hashlib.sha256((str(getattr(result, "stdout", "")) + str(getattr(result, "stderr", ""))).encode("utf-8")).hexdigest()

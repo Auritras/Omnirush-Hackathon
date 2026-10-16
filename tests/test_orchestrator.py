@@ -9,6 +9,7 @@ from proofix.models import DomainError, EventRecord
 from proofix.omnirush import RecordedSessionClient, run_specialists
 from proofix.orchestrator import ProofFixOrchestrator
 from proofix.runner import CommandPolicy, run_command
+from proofix.verification import VerificationPlan
 from proofix.schemas import SchemaError
 from proofix.state import transition
 from proofix.store import RunStore
@@ -181,6 +182,38 @@ class OrchestratorTests(unittest.TestCase):
         self.assertTrue(hypotheses)
         self.assertTrue(all(hypothesis.role and hypothesis.session_id for hypothesis in hypotheses))
         self.assertFalse(any("state" in hypothesis.to_dict() for hypothesis in hypotheses))
+
+    def test_persisted_patch_approval_reconstructs_after_orchestrator_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = self._repository(root, "import sys\nprint('failure')\nsys.exit(1)\n")
+            (repository / "tests").mkdir()
+            (repository / "tests" / "__init__.py").write_text("", encoding="utf-8")
+            (repository / "tests" / "test_case.py").write_text("import subprocess, sys, unittest\nclass CaseTest(unittest.TestCase):\n    def test_case(self): self.assertEqual(subprocess.run([sys.executable, 'case.py']).returncode, 0)\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repository, check=True)
+            subprocess.run(["git", "commit", "-qm", "tests"], cwd=repository, check=True)
+            store = RunStore(root / "runs")
+            manager = WorkspaceManager(root / "workspace-root")
+            orchestrator = ProofFixOrchestrator(store, manager, run_command, RecordedSessionClient(Path("fixtures/omnirush/reproducible-run.json")))
+            run_id = orchestrator.start_run(sanitize_intake({"repository_path": str(repository), "command": "python case.py", "failure_text": "failure"}))
+            self.assertEqual(orchestrator.advance_reproduction(run_id).state, "reproduced")
+            self.assertEqual(orchestrator.advance_diagnosis(run_id).state, "diagnosing")
+            diff = """diff --git a/case.py b/case.py
+--- a/case.py
++++ b/case.py
+@@ -1,3 +1 @@
+-import sys
+-print('failure')
+-sys.exit(1)
++print('fixed')
+"""
+            self.assertEqual(orchestrator.propose_patch(run_id, diff).state, "awaiting_approval")
+            approved = orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z")
+            self.assertEqual(approved.state, "applying")
+            restarted = ProofFixOrchestrator(store, WorkspaceManager(root / "workspace-root"), run_command, RecordedSessionClient(Path("fixtures/omnirush/reproducible-run.json")))
+            result = restarted.verify_patch(run_id, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"))
+            self.assertEqual(result.state, "verified")
+            self.assertEqual(RunStore(root / "runs").replay(run_id).state, "verified")
 
 
 if __name__ == "__main__":
