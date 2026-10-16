@@ -134,11 +134,10 @@ class ProofFixOrchestrator:
         snapshot = self._snapshots.get(run_id)
         repository = getattr(snapshot, "path", getattr(snapshot, "workspace", snapshot)) if snapshot is not None else sanitize_intake(run.intake).repository_path
         proposal = validate_unified_diff(diff, repository, scope)
-        self._patches[run_id] = proposal
         details = {"stage": "patch", "outcome": "proposed", "patch_digest": proposal.digest, "files": proposal.files}
         self._append_transition(run, "patch_proposed", "orchestrator:patch_proposed", details)
         current = self.store.get_run(run_id)
-        self.store.update_run(replace(current, patch={**proposal.to_dict(), "diff": diff}))
+        self.store.update_run(replace(current, patch={**proposal.to_dict(), "run_id": run_id, "diff": diff}))
         self._append_transition(self.store.get_run(run_id), "awaiting_approval", "orchestrator:approval_requested", {"stage": "patch", "outcome": "awaiting_approval", "patch_digest": proposal.digest})
         return self.store.get_run(run_id)
 
@@ -146,12 +145,20 @@ class ProofFixOrchestrator:
         run = self.store.get_run(run_id)
         if run.state != "awaiting_approval" or not run.patch:
             raise DomainError(f"patch is not awaiting approval: {run.state}")
-        proposal = self._patches.get(run_id) or self._proposal_from_run(run)
+        if not isinstance(patch_digest, str) or not patch_digest:
+            raise DomainError("explicit current patch digest is required")
+        # The durable run snapshot is authoritative.  A process-local proposal
+        # may be stale or belong to a different proposal after restart.
+        proposal = self._proposal_from_run(run)
         if proposal is None:
             raise DomainError("patch proposal is unavailable")
-        digest = patch_digest or proposal.digest
         current_digest = str(run.patch.get("digest"))
-        action = approve_patch(run_id, digest, actor, timestamp, proposal=proposal, current_digest=current_digest)
+        persisted_run_id = run.patch.get("run_id")
+        if persisted_run_id != run_id:
+            raise DomainError("patch proposal is bound to a different run")
+        if patch_digest != current_digest or patch_digest != proposal.digest:
+            raise DomainError("patch digest does not match the persisted current proposal")
+        action = approve_patch(run_id, patch_digest, actor, timestamp, proposal=proposal, current_digest=current_digest)
         self._patches[run_id] = proposal
         self._append_transition(run, "applying", "orchestrator:patch_approved", {"stage": "patch", "outcome": "approved", "patch_digest": action.patch_digest, "actor": actor, "timestamp": timestamp})
         current = self.store.get_run(run_id)
@@ -236,6 +243,7 @@ class ProofFixOrchestrator:
         try:
             proposal = PatchProposal.from_dict(data)
             proposal.diff = run.patch["diff"]  # type: ignore[attr-defined]
+            proposal.run_id = run.run_id  # type: ignore[attr-defined]
             validate_proposal_digest(proposal, str(run.patch.get("digest")))
         except Exception as exc:
             raise DomainError("persisted patch proposal digest is invalid") from exc

@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+import subprocess
 
 from proofix.patches import approve_patch, is_patch_approved, reject_patch, request_another_diagnosis, validate_unified_diff
 
@@ -33,6 +34,24 @@ class PatchTests(unittest.TestCase):
             self.assertEqual(validate_unified_diff(rename, root).files, ["new name.txt"])
             mode = "diff --git a/script.sh b/script.sh\nold mode 100644\nnew mode 100755\n"
             self.assertEqual(validate_unified_diff(mode, root).files, ["script.sh"])
+
+    def test_real_git_unquoted_space_rename_diff_is_parsed_from_file_headers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "proofix@example.test"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "ProofFix Tests"], cwd=repo, check=True)
+            (repo / "old name.txt").write_text("same\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-qm", "old"], cwd=repo, check=True)
+            subprocess.run(["git", "mv", "old name.txt", "new name.txt"], cwd=repo, check=True)
+            diff = subprocess.check_output(["git", "diff", "--no-renames", "--cached"], cwd=repo, text=True)
+            # Use Git's rename form, which is unquoted for this fixture.
+            subprocess.run(["git", "reset", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+            diff = subprocess.check_output(["git", "diff", "--cached", "--no-ext-diff", "--no-color"], cwd=repo, text=True)
+            self.assertIn("diff --git a/old name.txt b/new name.txt", diff)
+            self.assertEqual(validate_unified_diff(diff, repo).files, ["new name.txt"])
 
     def test_malformed_absolute_traversal_and_scope_diffs_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

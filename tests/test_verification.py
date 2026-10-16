@@ -92,6 +92,17 @@ class VerificationTests(unittest.TestCase):
             summary = verify_patch(proposal, repo, run_command, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"), run_id="run-tamper")
             self.assertEqual(summary.status, "verification_blocked")
 
+    def test_tampered_patch_scope_is_blocked_before_application(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = self._repo(root, "print('bad')\n")
+            diff = """diff --git a/case.py b/case.py\n--- a/case.py\n+++ b/case.py\n@@ -1 +1 @@\n-print('bad')\n+print('good')\n"""
+            proposal = validate_unified_diff(diff, repo)
+            approve_patch("run-scope", proposal.digest, "alice", "2026-10-15T00:00:00Z", proposal=proposal, current_digest=proposal.digest)
+            proposal.files = []
+            summary = verify_patch(proposal, repo, run_command, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"), run_id="run-scope")
+            self.assertEqual(summary.status, "verification_blocked")
+
 
 if __name__ == "__main__":
     unittest.main()

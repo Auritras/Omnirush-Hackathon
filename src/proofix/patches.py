@@ -88,6 +88,9 @@ def approve_patch(
     _validate_action_inputs(run_id, patch_digest, actor, timestamp)
     if proposal is None or current_digest is None:
         raise ValueError("current persisted proposal and digest are required")
+    proposal_run_id = getattr(proposal, "run_id", None)
+    if proposal_run_id is not None and proposal_run_id != run_id:
+        raise ValueError("patch proposal is bound to a different run")
     if proposal is not None:
         _validate_proposal(proposal, current_digest)
         if proposal.digest != patch_digest:
@@ -144,6 +147,10 @@ def is_patch_approved(patch: Any, run_id: str | None = None) -> bool:
     digest = getattr(patch, "digest", None) or _digest_for_text(patch)
     computed = _digest_for_text(patch)
     if not digest or computed is None or computed != digest or not isinstance(run_id, str) or not run_id.strip():
+        return False
+    try:
+        _validate_proposal(patch, digest)
+    except (TypeError, ValueError):
         return False
     approval = getattr(patch, "approval", None)
     if not isinstance(approval, dict) or approval.get("action") != "approved" or approval.get("patch_digest") != digest:
@@ -269,6 +276,15 @@ def _normalize_path(value: str, allow_dev_null: bool = False) -> str:
 
 
 def _parse_git_paths(value: str) -> tuple[str, str]:
+    # Git may emit unquoted spaces as: ``a/old name.txt b/new name.txt``.
+    # Preserve the two halves by using the second `` b/`` prefix as the
+    # separator rather than splitting on whitespace.
+    unquoted = re.match(r"^a/(.*) b/(.*)$", value)
+    if unquoted:
+        return (
+            _normalize_path("a/" + unquoted.group(1), allow_dev_null=True),
+            _normalize_path("b/" + unquoted.group(2), allow_dev_null=True),
+        )
     try:
         paths = shlex.split(value, posix=True)
     except ValueError as exc:

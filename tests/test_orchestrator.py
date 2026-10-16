@@ -208,12 +208,41 @@ class OrchestratorTests(unittest.TestCase):
 +print('fixed')
 """
             self.assertEqual(orchestrator.propose_patch(run_id, diff).state, "awaiting_approval")
-            approved = orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z")
+            approved = orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z", patch_digest=orchestrator.store.get_run(run_id).patch["digest"])
             self.assertEqual(approved.state, "applying")
             restarted = ProofFixOrchestrator(store, WorkspaceManager(root / "workspace-root"), run_command, RecordedSessionClient(Path("fixtures/omnirush/reproducible-run.json")))
             result = restarted.verify_patch(run_id, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"))
             self.assertEqual(result.state, "verified")
             self.assertEqual(RunStore(root / "runs").replay(run_id).state, "verified")
+
+    def test_approval_requires_explicit_persisted_digest_and_run_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = self._repository(root, "import sys\nprint('failure')\nsys.exit(1)\n")
+            orchestrator = self._orchestrator(root, repository, "reproducible-run.json")
+            run_id = orchestrator.start_run(sanitize_intake({"repository_path": str(repository), "command": "python case.py", "failure_text": "failure"}))
+            orchestrator.advance_reproduction(run_id)
+            orchestrator.advance_diagnosis(run_id)
+            diff = """diff --git a/case.py b/case.py
+--- a/case.py
++++ b/case.py
+@@ -1,3 +1 @@
+-import sys
+-print('failure')
+-sys.exit(1)
++print('fixed')
+"""
+            orchestrator.propose_patch(run_id, diff)
+            current_digest = orchestrator.store.get_run(run_id).patch["digest"]
+            with self.assertRaises(DomainError):
+                orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z")
+            with self.assertRaises(DomainError):
+                orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z", patch_digest="sha256:" + "0" * 64)
+            persisted = orchestrator.store.get_run(run_id)
+            persisted.patch["run_id"] = "run-other"
+            orchestrator.store.update_run(persisted)
+            with self.assertRaises(DomainError):
+                orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z", patch_digest=current_digest)
 
     def test_reject_and_request_decisions_persist_and_replay_as_diagnosing(self):
         for action in ("reject", "request"):
@@ -262,7 +291,7 @@ class OrchestratorTests(unittest.TestCase):
 +print('fixed')
 """
             orchestrator.propose_patch(run_id, diff)
-            orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z")
+            orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z", patch_digest=orchestrator.store.get_run(run_id).patch["digest"])
             snapshot = root / "runs" / "runs" / run_id / "snapshot.json"
             persisted = json.loads(snapshot.read_text(encoding="utf-8"))
             persisted["patch"]["diff"] = persisted["patch"]["diff"].replace("print('fixed')", "print('tampered')")
