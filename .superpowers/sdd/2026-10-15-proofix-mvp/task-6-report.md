@@ -117,3 +117,32 @@ Complete.
 ### Concerns
 
 - Git binary patches remain unsupported; textual rename, mode, quoted-path, unquoted-space, and standard metadata forms are covered.
+
+## Fix round 4
+
+### Status
+
+Complete.
+
+### Commit
+
+`2b6892d` — `fix: harden task 6 patch verification`
+
+### Changes
+
+- Disambiguated unquoted Git path headers against rename metadata or file headers, preserving path containment and metadata matching for paths containing ` b/`.
+- Added a regression using an actual Git-generated rename diff for `old name.txt` to `new b/file.txt`.
+- Made orchestrator verification reconstruct the proposal from the persisted run after approval instead of preferring the process-local proposal cache.
+- Added same-process regressions proving persisted diff and file-scope mutations return `verification_blocked` before checks run.
+
+### Exact checks and results
+
+- TDD red phase: `PYTHONPATH=src python -m unittest tests.test_patches.PatchTests.test_real_git_unquoted_space_rename_diff_is_parsed_from_file_headers tests.test_orchestrator.OrchestratorTests.test_verification_reconstructs_current_persisted_proposal_after_approval -v`: failed before the fix (one parser error and two mutation-test failures).
+- `PYTHONPATH=src python -m unittest tests.test_experiments tests.test_patches tests.test_verification tests.test_orchestrator -v`: passed; 34 focused tests ran successfully.
+- `make test`: passed; 86 tests ran successfully.
+- `PYTHONPATH=src python -m compileall -q src tests`: passed.
+- `git diff --check`: passed.
+
+### Concerns
+
+- Ambiguous unquoted `diff --git` path operands are rejected unless Git file headers or rename metadata provide the authoritative split; this preserves strict metadata and path validation.
