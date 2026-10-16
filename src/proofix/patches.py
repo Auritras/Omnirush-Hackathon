@@ -8,6 +8,7 @@ import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shlex
 import subprocess
 from typing import Any, Iterable
 
@@ -85,6 +86,8 @@ def approve_patch(
     current_digest: str | None = None,
 ) -> PatchAction:
     _validate_action_inputs(run_id, patch_digest, actor, timestamp)
+    if proposal is None or current_digest is None:
+        raise ValueError("current persisted proposal and digest are required")
     if proposal is not None:
         _validate_proposal(proposal, current_digest)
         if proposal.digest != patch_digest:
@@ -131,22 +134,21 @@ def reject_patch(
 
 def request_another_diagnosis(run_id: str, actor: str, timestamp: str, digest: str | None = None) -> PatchAction:
     """Record a diagnosis request without touching any repository workspace."""
-    if not isinstance(run_id, str) or not run_id.strip() or not isinstance(actor, str) or not actor.strip():
-        raise ValueError("run ID and actor are required")
-    _validate_timestamp(timestamp)
+    validate_audit(actor, timestamp)
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise ValueError("run ID is required")
     return PatchAction(run_id, "request_another_diagnosis", actor, timestamp, digest)
 
 
 def is_patch_approved(patch: Any, run_id: str | None = None) -> bool:
     digest = getattr(patch, "digest", None) or _digest_for_text(patch)
-    if not digest:
+    computed = _digest_for_text(patch)
+    if not digest or computed is None or computed != digest or not isinstance(run_id, str) or not run_id.strip():
         return False
     approval = getattr(patch, "approval", None)
     if not isinstance(approval, dict) or approval.get("action") != "approved" or approval.get("patch_digest") != digest:
         return False
-    if run_id is not None:
-        return approval.get("run_id") == run_id
-    return True
+    return approval.get("run_id") == run_id
 
 
 def apply_approved_patch(patch: Any, workspace: os.PathLike[str] | str, run_id: str | None = None) -> None:
@@ -179,25 +181,41 @@ def _parse_diff(diff: str) -> list[str]:
         line = lines[index]
         if not line.startswith("diff --git "):
             raise ValueError("malformed unified diff header")
-        header = line[len("diff --git "):].split()
-        if len(header) != 2:
-            raise ValueError("malformed diff paths")
-        old = _normalize_path(header[0], allow_dev_null=True)
-        new = _normalize_path(header[1], allow_dev_null=True)
+        old, new = _parse_git_paths(line[len("diff --git "):])
         index += 1
+        metadata_paths: dict[str, str] = {}
+        has_mode_metadata = False
         while index < len(lines) and not lines[index].startswith(("--- ", "+++ ")):
             metadata = lines[index]
-            if metadata.startswith(("index ", "old mode ", "new mode ", "new file mode ", "deleted file mode ", "similarity index ", "dissimilarity index ", "rename from ", "rename to ")):
+            if metadata.startswith(("old mode ", "new mode ", "new file mode ", "deleted file mode ")):
+                has_mode_metadata = True
+                index += 1
+                continue
+            if metadata.startswith(("rename from ", "rename to ")):
+                key, value = metadata.split(" ", 2)[1:]
+                metadata_paths[key] = _normalize_path(value)
+                index += 1
+                continue
+            if metadata.startswith(("index ", "similarity index ", "dissimilarity index ")):
                 index += 1
                 continue
             if metadata.startswith("Binary files "):
                 raise ValueError("binary patches are not supported")
             break
         if index + 1 >= len(lines) or not lines[index].startswith("--- ") or not lines[index + 1].startswith("+++ "):
-            raise ValueError("unified diff is missing file headers")
-        old_header = _normalize_path(lines[index][4:].split("\t", 1)[0], allow_dev_null=True)
-        new_header = _normalize_path(lines[index + 1][4:].split("\t", 1)[0], allow_dev_null=True)
-        if old != old_header or new != new_header or old == new == "/dev/null":
+            if not has_mode_metadata and not {"from", "to"}.issubset(metadata_paths):
+                raise ValueError("unified diff is missing file headers")
+            if {"from", "to"}.issubset(metadata_paths) and (metadata_paths["from"] != old or metadata_paths["to"] != new):
+                raise ValueError("rename paths do not match diff metadata")
+            relative = new if new != "/dev/null" else old
+            if relative == "/dev/null" or relative.startswith(".git/") or relative == ".git" or relative.startswith(".proofix"):
+                raise ValueError("patch changes a protected or out-of-scope path")
+            if relative not in files:
+                files.append(relative)
+            continue
+        old_header = _normalize_path(_parse_file_header(lines[index][4:]), allow_dev_null=True)
+        new_header = _normalize_path(_parse_file_header(lines[index + 1][4:]), allow_dev_null=True)
+        if (old != old_header and old_header != "/dev/null") or (new != new_header and new_header != "/dev/null") or old == new == "/dev/null":
             raise ValueError("diff file headers do not match diff metadata")
         relative = new if new != "/dev/null" else old
         if relative == "/dev/null" or relative.startswith(".git/") or relative == ".git" or relative.startswith(".proofix"):
@@ -250,18 +268,52 @@ def _normalize_path(value: str, allow_dev_null: bool = False) -> str:
     return path.as_posix()
 
 
+def _parse_git_paths(value: str) -> tuple[str, str]:
+    try:
+        paths = shlex.split(value, posix=True)
+    except ValueError as exc:
+        raise ValueError("malformed diff paths") from exc
+    if len(paths) != 2:
+        raise ValueError("malformed diff paths")
+    return _normalize_path(paths[0], allow_dev_null=True), _normalize_path(paths[1], allow_dev_null=True)
+
+
+def _parse_file_header(value: str) -> str:
+    value = value.rstrip("\r\n")
+    if "\t" in value:
+        value = value.split("\t", 1)[0]
+    value = value.strip()
+    if value.startswith('"'):
+        try:
+            paths = shlex.split(value, posix=True)
+        except ValueError as exc:
+            raise ValueError("malformed file header path") from exc
+        if not paths:
+            raise ValueError("malformed file header path")
+        return paths[0]
+    return value
+
+
 def _validate_action_inputs(run_id: str, digest: str, actor: str, timestamp: str) -> None:
     if not isinstance(run_id, str) or not run_id.strip():
         raise ValueError("run ID is required")
     if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
         raise ValueError("patch digest is invalid")
+    validate_audit(actor, timestamp)
+
+
+def validate_audit(actor: str, timestamp: str) -> None:
     if not isinstance(actor, str) or not actor.strip():
         raise ValueError("approval actor is required")
     _validate_timestamp(timestamp)
 
 
+def validate_proposal_digest(proposal: PatchProposal, current_digest: str | None = None) -> None:
+    _validate_proposal(proposal, current_digest)
+
+
 def _validate_timestamp(value: str) -> None:
-    if not isinstance(value, str) or not value.endswith("Z"):
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z", value):
         raise ValueError("timestamp must be UTC ISO-8601")
     try:
         parsed = datetime.fromisoformat(value[:-1] + "+00:00")
@@ -283,3 +335,5 @@ def _validate_proposal(proposal: PatchProposal, current_digest: str | None) -> N
     calculated = "sha256:" + hashlib.sha256(diff.encode("utf-8")).hexdigest()
     if calculated != proposal.digest or (current_digest is not None and calculated != current_digest):
         raise ValueError("current proposal digest is invalid or stale")
+    if sorted(_parse_diff(diff)) != sorted(str(item) for item in proposal.files):
+        raise ValueError("current proposal file scope is invalid or stale")

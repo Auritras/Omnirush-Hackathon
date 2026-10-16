@@ -86,7 +86,7 @@ def verify_patch(
         except Exception as exc:
             return VerificationSummary("verification_blocked", [_blocked_check("patch_application", _bounded_error(exc))])
         try:
-            apply_approved_patch(patch, verification_workspace)
+            apply_approved_patch(patch, verification_workspace, run_id=run_id)
         except Exception as exc:
             return VerificationSummary("verification_blocked", [_blocked_check("patch_application", _bounded_error(exc))])
 

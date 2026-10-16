@@ -29,7 +29,7 @@ class VerificationTests(unittest.TestCase):
             repo = self._repo(root, "print('bad')\n")
             diff = """diff --git a/case.py b/case.py\n--- a/case.py\n+++ b/case.py\n@@ -1 +1 @@\n-print('bad')\n+print('good')\n"""
             proposal = validate_unified_diff(diff, repo)
-            summary = verify_patch(proposal, repo, run_command, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"))
+            summary = verify_patch(proposal, repo, run_command, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"), run_id="run-verify")
             self.assertEqual(summary.status, "verification_blocked")
             self.assertEqual((repo / "case.py").read_text(), "print('bad')\n")
 
@@ -41,7 +41,7 @@ class VerificationTests(unittest.TestCase):
             proposal = validate_unified_diff(diff, repo)
             approve_patch("run-verify", proposal.digest, "alice", "2026-10-15T00:00:00Z", proposal=proposal, current_digest=proposal.digest)
             plan = VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case", relevant_tests=["python -m unittest tests.test_case"], broader_suite="python -m unittest tests.test_case")
-            summary = verify_patch(proposal, repo, run_command, plan)
+            summary = verify_patch(proposal, repo, run_command, plan, run_id="run-verify")
             self.assertEqual(summary.status, "verified")
             self.assertEqual([check.name for check in summary.checks], ["original_failure", "regression_test", "relevant_test_1", "broader_suite", "diff_scope_syntax"])
 
@@ -53,18 +53,18 @@ class VerificationTests(unittest.TestCase):
             proposal = validate_unified_diff(diff, repo)
             approve_patch("run-fail", proposal.digest, "alice", "2026-10-15T00:00:00Z", proposal=proposal, current_digest=proposal.digest)
             plan = VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.missing_module")
-            summary = verify_patch(proposal, repo, run_command, plan)
+            summary = verify_patch(proposal, repo, run_command, plan, run_id="run-fail")
             self.assertEqual(summary.status, "verification_failed")
             self.assertEqual(summary.failed_check.name, "regression_test")
             self.assertEqual(summary.failed_check.status, "failed")
 
-            blocked = verify_patch(proposal, repo, run_command, VerificationPlan("python evil.py", "python -m unittest tests.test_case"))
+            blocked = verify_patch(proposal, repo, run_command, VerificationPlan("python evil.py", "python -m unittest tests.test_case"), run_id="run-fail")
             self.assertEqual(blocked.status, "verification_blocked")
             self.assertEqual(blocked.failed_check.status, "blocked")
 
             marker = repo / "verification-marker"
             (repo / "evil.py").write_text(f"from pathlib import Path; Path({str(marker)!r}).touch()\n", encoding="utf-8")
-            blocked = verify_patch(proposal, repo, run_command, VerificationPlan("python evil.py", "python -m unittest tests.test_case"))
+            blocked = verify_patch(proposal, repo, run_command, VerificationPlan("python evil.py", "python -m unittest tests.test_case"), run_id="run-fail")
             self.assertFalse(marker.exists())
             self.assertEqual(blocked.status, "verification_blocked")
 
@@ -77,9 +77,20 @@ class VerificationTests(unittest.TestCase):
             approve_patch("run-exception", proposal.digest, "alice", "2026-10-15T00:00:00Z", proposal=proposal, current_digest=proposal.digest)
             def exploding_runner(*_args, **_kwargs):
                 raise OSError("runner unavailable")
-            summary = verify_patch(proposal, repo, exploding_runner, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"))
+            summary = verify_patch(proposal, repo, exploding_runner, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"), run_id="run-exception")
             self.assertEqual(summary.status, "verification_blocked")
             self.assertIn("runner unavailable", summary.failed_check.details["error"])
+
+    def test_tampered_patch_text_is_blocked_even_with_an_old_approval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = self._repo(root, "print('bad')\n")
+            diff = """diff --git a/case.py b/case.py\n--- a/case.py\n+++ b/case.py\n@@ -1 +1 @@\n-print('bad')\n+print('good')\n"""
+            proposal = validate_unified_diff(diff, repo)
+            approve_patch("run-tamper", proposal.digest, "alice", "2026-10-15T00:00:00Z", proposal=proposal, current_digest=proposal.digest)
+            proposal.diff = diff.replace("print('good')", "print('tampered')")
+            summary = verify_patch(proposal, repo, run_command, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"), run_id="run-tamper")
+            self.assertEqual(summary.status, "verification_blocked")
 
 
 if __name__ == "__main__":

@@ -215,6 +215,63 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(result.state, "verified")
             self.assertEqual(RunStore(root / "runs").replay(run_id).state, "verified")
 
+    def test_reject_and_request_decisions_persist_and_replay_as_diagnosing(self):
+        for action in ("reject", "request"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                repository = self._repository(root, "import sys\nprint('failure')\nsys.exit(1)\n")
+                orchestrator = self._orchestrator(root, repository, "reproducible-run.json")
+                run_id = orchestrator.start_run(sanitize_intake({"repository_path": str(repository), "command": "python case.py", "failure_text": "failure"}))
+                orchestrator.advance_reproduction(run_id)
+                orchestrator.advance_diagnosis(run_id)
+                diff = """diff --git a/case.py b/case.py
+--- a/case.py
++++ b/case.py
+@@ -1,3 +1 @@
+-import sys
+-print('failure')
+-sys.exit(1)
++print('fixed')
+"""
+                orchestrator.propose_patch(run_id, diff)
+                if action == "reject":
+                    result = orchestrator.reject_patch(run_id, "alice", "2026-10-15T00:00:00Z")
+                    expected = "rejected"
+                else:
+                    result = orchestrator.request_another_diagnosis(run_id, "alice", "2026-10-15T00:00:00Z")
+                    expected = "request_another_diagnosis"
+                self.assertEqual(result.state, "diagnosing")
+                self.assertEqual(result.patch["decision"]["action"], expected)
+                self.assertEqual(RunStore(root / "runs").replay(run_id).state, "diagnosing")
+
+    def test_restart_rejects_tampered_persisted_patch_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = self._repository(root, "import sys\nprint('failure')\nsys.exit(1)\n")
+            orchestrator = self._orchestrator(root, repository, "reproducible-run.json")
+            run_id = orchestrator.start_run(sanitize_intake({"repository_path": str(repository), "command": "python case.py", "failure_text": "failure"}))
+            orchestrator.advance_reproduction(run_id)
+            orchestrator.advance_diagnosis(run_id)
+            diff = """diff --git a/case.py b/case.py
+--- a/case.py
++++ b/case.py
+@@ -1,3 +1 @@
+-import sys
+-print('failure')
+-sys.exit(1)
++print('fixed')
+"""
+            orchestrator.propose_patch(run_id, diff)
+            orchestrator.approve_patch(run_id, "alice", "2026-10-15T00:00:00Z")
+            snapshot = root / "runs" / "runs" / run_id / "snapshot.json"
+            persisted = json.loads(snapshot.read_text(encoding="utf-8"))
+            persisted["patch"]["diff"] = persisted["patch"]["diff"].replace("print('fixed')", "print('tampered')")
+            snapshot.write_text(json.dumps(persisted), encoding="utf-8")
+            restarted = self._orchestrator(root, repository, "reproducible-run.json")
+            result = restarted.verify_patch(run_id, VerificationPlan("python -m unittest tests.test_case", "python -m unittest tests.test_case"))
+            self.assertEqual(result.state, "verification_blocked")
+            self.assertEqual(result.verification["checks"][0]["name"], "patch_integrity")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -239,7 +239,7 @@ def validate_guarded_command(command: str | Sequence[str], workspace: os.PathLik
             module = args[index + 1]
             target_modules = args[index + 2:] if module == "unittest" else [module]
             allowed_module = module.startswith(("tests.", "test.")) or (module == "unittest" and bool(target_modules) and all(item.startswith(("tests.", "test.")) for item in target_modules))
-            if kind == "dependency_runtime_inspection" and module in {"pip", "setuptools", "venv"}:
+            if kind == "dependency_runtime_inspection" and args == ["-m", "pip", "--version"]:
                 allowed_module = True
             if not allowed_module or any("/" in item or "\\" in item for item in target_modules):
                 raise ValueError("Python module target is outside the approved test/runtime vocabulary")
@@ -258,6 +258,11 @@ def validate_guarded_command(command: str | Sequence[str], workspace: os.PathLik
             raise ValueError("build target is not approved")
         if any("/" in item or "\\" in item or ".." in Path(item).parts for item in args):
             raise ValueError("build target path is not contained")
+    if kind == "dependency_runtime_inspection":
+        if executable not in {"python", "python3"}:
+            raise ValueError("dependency/runtime inspection executable is not supported")
+        if args not in (["--version"], ["-V"], ["-m", "pip", "--version"]):
+            raise ValueError("dependency/runtime inspection is limited to read-only version checks")
     return argv
 
 

@@ -45,6 +45,18 @@ class ExperimentTests(unittest.TestCase):
                 run_experiment(ExperimentSpec("named_test_or_build", "python evil.py"), workspace, run_command)
             self.assertFalse(marker.exists())
 
+    def test_dependency_runtime_inspection_is_read_only_and_fixed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            marker = workspace / "side-effect"
+            with self.assertRaises(ValueError):
+                run_experiment(ExperimentSpec("dependency_runtime_inspection", f"python -m venv {marker}"), workspace, run_command)
+            self.assertFalse(marker.exists())
+            with self.assertRaises(ValueError):
+                run_experiment(ExperimentSpec("dependency_runtime_inspection", "python -m pip install proofix-test"), workspace, run_command)
+            result = run_experiment(ExperimentSpec("dependency_runtime_inspection", "python -m pip --version"), workspace, run_command)
+            self.assertEqual(result.exit_code, 0)
+
     def test_parent_commit_runs_the_same_named_target_and_regression_requires_a_distinct_spec(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
