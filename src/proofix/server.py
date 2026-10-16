@@ -25,6 +25,12 @@ from .worktree import WorkspaceManager
 
 MAX_REQUEST_BODY = 1_048_576
 MAX_ARTIFACT_BYTES = 4 * 1024 * 1024
+WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
+STATIC_ASSETS = {
+    "index.html": "text/html; charset=utf-8",
+    "styles.css": "text/css; charset=utf-8",
+    "app.js": "text/javascript; charset=utf-8",
+}
 
 
 @dataclass
@@ -154,11 +160,17 @@ def _make_handler():
                 route = [unquote(item) for item in parsed.path.split("/") if item]
                 if any(item in {".", ".."} or "/" in item or "\\" in item for item in route):
                     raise _HTTPError(400, "unsafe path")
+                api_route = bool(route and (route[0] == "api" or route == ["health"]))
                 if route and route[0] == "api":
                     route.pop(0)
                 if method == "GET":
-                    status, content_type, body = self._get(route, parse_qs(parsed.query))
+                    if api_route:
+                        status, content_type, body = self._get(route, parse_qs(parsed.query))
+                    else:
+                        status, content_type, body = self._static(route)
                 else:
+                    if not api_route:
+                        raise _HTTPError(404, "not found")
                     payload = self._read_json()
                     status, content_type, body = self._post(route, payload)
                 self._send(status, content_type, body)
@@ -197,6 +209,19 @@ def _make_handler():
             if route[2] == "artifacts" and len(route) >= 4:
                 return self._artifact(run_id, "/".join(route[3:]))
             raise _HTTPError(404, "not found")
+
+        def _static(self, route: list[str]):
+            """Serve the small, allow-listed vanilla frontend from ``web/`` only."""
+
+            asset = "index.html" if not route else "/".join(route)
+            content_type = STATIC_ASSETS.get(asset)
+            if content_type is None:
+                raise _HTTPError(404, "not found")
+            root = WEB_ROOT.resolve(strict=False)
+            selected = (root / asset).resolve(strict=False)
+            if not ensure_contained(selected, root) or not selected.is_file():
+                raise _HTTPError(404, "not found")
+            return 200, content_type, selected.read_bytes()
 
         def _artifact(self, run_id: str, reference: str):
             run = self.server.store.get_run(run_id)

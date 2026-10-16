@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="ProofFix evidence-chain control room">
+    <title>ProofFix / Evidence chain</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to evidence chain</a>
+    <div class="app-shell">
+      <header class="topbar" aria-label="ProofFix header">
+        <a class="wordmark" href="/" aria-label="ProofFix home"><span class="wordmark-mark" aria-hidden="true">P</span><span>ProofFix</span></a>
+        <div class="topbar-context">
+          <span class="eyebrow">OPERATE / PROOF CHAIN</span>
+          <span class="live-dot" aria-hidden="true"></span>
+          <span id="connection-label">Awaiting run snapshot</span>
+        </div>
+        <div class="topbar-actions">
+          <button class="button button-quiet" id="refresh-button" type="button" aria-label="Refresh run snapshot">Refresh</button>
+          <button class="button button-amber" id="export-markdown" type="button" aria-label="Export evidence as Markdown" disabled>Export .md</button>
+          <button class="button button-outline" id="export-json" type="button" aria-label="Export evidence as JSON" disabled>Export .json</button>
+        </div>
+      </header>
+
+      <main id="main-content" tabindex="-1">
+        <section class="masthead" aria-labelledby="page-title">
+          <div>
+            <p class="eyebrow">EVIDENCE CHAIN / LOCALHOST</p>
+            <h1 id="page-title">Operate the proof,<br><em>not the guess.</em></h1>
+            <p class="lede">A bounded record of what was reproduced, why it happened, what changed, and how the result was verified.</p>
+          </div>
+          <div class="state-block" aria-label="Current run status">
+            <span class="state-kicker">CURRENT STATE</span>
+            <strong id="run-state">No run selected</strong>
+            <span id="terminal-copy" class="state-copy">Load a run ID with <code>?run=run-…</code> to inspect server-owned evidence.</span>
+          </div>
+        </section>
+
+        <section class="run-strip panel" aria-labelledby="run-context-heading">
+          <div class="section-heading compact-heading">
+            <div><p class="eyebrow">RUN CONTEXT</p><h2 id="run-context-heading">The immutable intake</h2></div>
+            <span id="provenance-badge" class="badge badge-neutral">Waiting for data</span>
+          </div>
+          <dl class="context-grid">
+            <div><dt>Repository</dt><dd id="repository-value">—</dd></div>
+            <div><dt>Branch</dt><dd id="branch-value">—</dd></div>
+            <div><dt>Commit</dt><dd id="commit-value">—</dd></div>
+            <div><dt>Run ID</dt><dd id="run-id-value">—</dd></div>
+            <div><dt>Provenance</dt><dd id="provenance-value">—</dd></div>
+          </dl>
+        </section>
+
+        <nav class="stage-rail panel" aria-label="Proof chain stages">
+          <div class="rail-intro"><span class="eyebrow">CHAIN</span><strong>Six gates</strong><span>Server-owned sequence</span></div>
+          <ol id="stage-list">
+            <li data-stage="triage"><span class="stage-index">01</span><span class="stage-name">Triage</span><span class="stage-status">Pending</span></li>
+            <li data-stage="reproduction"><span class="stage-index">02</span><span class="stage-name">Reproduce</span><span class="stage-status">Pending</span></li>
+            <li data-stage="diagnosis"><span class="stage-index">03</span><span class="stage-name">Diagnose</span><span class="stage-status">Pending</span></li>
+            <li data-stage="experiment"><span class="stage-index">04</span><span class="stage-name">Experiment</span><span class="stage-status">Pending</span></li>
+            <li data-stage="patch"><span class="stage-index">05</span><span class="stage-name">Patch</span><span class="stage-status">Pending</span></li>
+            <li data-stage="verification"><span class="stage-index">06</span><span class="stage-name">Verify</span><span class="stage-status">Pending</span></li>
+          </ol>
+        </nav>
+
+        <div id="live-status" class="sr-only" aria-live="polite" aria-atomic="true">Loading evidence chain.</div>
+        <p id="terminal-status-key" class="sr-only">Terminal statuses: not_reproduced, blocked, verification_failed, verification_blocked, verified.</p>
+
+        <section class="workspace-grid" aria-label="Evidence workspace">
+          <article class="panel panel-reproduction" aria-labelledby="reproduction-heading">
+            <div class="section-heading">
+              <div><p class="eyebrow">02 / REPRODUCE</p><h2 id="reproduction-heading">Reproduction record</h2></div>
+              <span id="reproduction-status" class="status-pill status-pending">Pending</span>
+            </div>
+            <div class="command-box"><span class="field-label">EXACT COMMAND</span><code id="reproduction-command">No reproduction command recorded.</code></div>
+            <div class="metric-row">
+              <div><span class="field-label">EXIT CODE</span><strong id="reproduction-exit">—</strong></div>
+              <div><span class="field-label">DURATION</span><strong id="reproduction-duration">—</strong></div>
+              <div><span class="field-label">ASSESSMENT</span><strong id="reproduction-assessment">—</strong></div>
+            </div>
+            <div class="log-grid">
+              <div><div class="log-heading"><span>stdout</span><span id="stdout-ref">—</span></div><pre id="stdout-log">No bounded stdout captured.</pre></div>
+              <div><div class="log-heading"><span>stderr</span><span id="stderr-ref">—</span></div><pre id="stderr-log">No bounded stderr captured.</pre></div>
+            </div>
+            <div class="card-footer"><span class="field-label">ARTIFACT REFERENCES</span><div id="reproduction-artifacts" class="chip-list"><span class="muted">None recorded</span></div></div>
+          </article>
+
+          <article class="panel panel-hypotheses" aria-labelledby="hypotheses-heading">
+            <div class="section-heading"><div><p class="eyebrow">03 / DIAGNOSE</p><h2 id="hypotheses-heading">Hypothesis board</h2></div><span id="hypothesis-count" class="count-label">0 specialists</span></div>
+            <div id="hypotheses-list" class="hypothesis-list"><p class="empty-state">No specialist hypotheses have been recorded. Diagnosis remains unproven.</p></div>
+          </article>
+
+          <article class="panel panel-patch" aria-labelledby="patch-heading">
+            <div class="section-heading"><div><p class="eyebrow">05 / PATCH</p><h2 id="patch-heading">Patch review</h2></div><span id="patch-status" class="status-pill status-pending">No proposal</span></div>
+            <div class="patch-meta"><div><span class="field-label">DIGEST</span><code id="patch-digest">—</code></div><div><span class="field-label">RISK</span><strong id="patch-risk">—</strong></div><div><span class="field-label">CHANGED LINES</span><strong id="patch-lines">—</strong></div></div>
+            <div class="diff-wrap"><span class="field-label">DIFF</span><pre id="patch-diff">No patch proposal recorded.</pre></div>
+            <div class="patch-details"><div><span class="field-label">CHANGED FILES</span><div id="changed-files" class="chip-list"><span class="muted">None recorded</span></div></div><div><span class="field-label">REGRESSION TEST</span><code id="regression-test">—</code></div></div>
+            <div class="approval-form" aria-label="Patch decision audit details">
+              <label for="actor-input">Actor<input id="actor-input" name="actor" type="text" autocomplete="off" placeholder="operator name"></label>
+              <label for="timestamp-input">UTC timestamp<input id="timestamp-input" name="timestamp" type="text" autocomplete="off" placeholder="2026-10-15T00:00:00Z"></label>
+            </div>
+            <div class="action-row"><button id="approve-button" class="button button-green" type="button" disabled>Approve patch</button><button id="reject-button" class="button button-danger" type="button" disabled>Reject</button><button id="diagnosis-button" class="button button-outline" type="button" disabled>Request diagnosis</button></div>
+            <p id="patch-action-status" class="form-note" role="status">Actions unlock only when the server reports an awaiting approval state.</p>
+          </article>
+
+          <article class="panel panel-verification" aria-labelledby="verification-heading">
+            <div class="section-heading"><div><p class="eyebrow">06 / VERIFY</p><h2 id="verification-heading">Deterministic checks</h2></div><div class="action-row"><button id="verify-button" class="button button-outline" type="button" disabled aria-label="Run server verification">Run verification</button><span id="verification-status" class="status-pill status-pending">Not run</span></div></div>
+            <ol id="verification-list" class="verification-list"><li class="empty-state">Verification checks will appear here in execution order.</li></ol>
+          </article>
+        </section>
+
+        <aside class="evidence-drawer panel" aria-labelledby="evidence-heading">
+          <div class="section-heading"><div><p class="eyebrow">EVIDENCE DRAWER</p><h2 id="evidence-heading">Trace every claim</h2></div><span id="evidence-count" class="count-label">0 records</span></div>
+          <div class="evidence-columns"><section><h3>Files &amp; lines</h3><div id="file-evidence" class="evidence-list"><p class="empty-state">No file evidence recorded.</p></div></section><section><h3>Commands &amp; artifacts</h3><div id="command-evidence" class="evidence-list"><p class="empty-state">No command evidence recorded.</p></div></section><section><h3>OmniRush sessions</h3><div id="session-evidence" class="evidence-list"><p class="empty-state">No sessions recorded.</p></div></section></div>
+        </aside>
+      </main>
+      <footer class="footer"><span>ProofFix / local evidence control room</span><span>Snapshots and events remain authoritative</span></footer>
+    </div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
