@@ -37,6 +37,27 @@ class CLITests(unittest.TestCase):
             self.assertEqual(writer.call_args.args[0].run_id, run.run_id)
             self.assertEqual(writer.call_args.args[2], "json")
 
+    def test_repository_must_be_inside_configured_cli_allowed_root(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            allowed = Path(directory) / "allowed"
+            repository = allowed / "repository"
+            repository.mkdir(parents=True)
+            denied = Path(outside) / "repository"
+            denied.mkdir()
+
+            class FakeServer:
+                def serve_forever(self):
+                    return None
+
+                def server_close(self):
+                    return None
+
+            with patch.object(cli, "create_server", return_value=FakeServer()) as factory:
+                self.assertEqual(cli.main(["run", "--data-root", str(Path(directory) / "data"), "--allowed-root", str(allowed), "--repository", str(repository)]), 0)
+                self.assertEqual(factory.call_args.args[0].allowed_roots, (allowed.resolve(),))
+            with self.assertRaises(ValueError):
+                cli.main(["run", "--data-root", str(Path(directory) / "data"), "--allowed-root", str(allowed), "--repository", str(denied)])
+
     def test_export_rejects_unknown_or_path_run_ids_and_outside_destinations(self):
         with tempfile.TemporaryDirectory() as directory:
             data_root = Path(directory) / "data"

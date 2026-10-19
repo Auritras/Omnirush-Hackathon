@@ -1,9 +1,24 @@
 import unittest
+import tempfile
+from pathlib import Path
 
 from proofix.intake import IntakeRequest, sanitize_intake
 
 
 class IntakeTests(unittest.TestCase):
+    def test_repository_authorization_accepts_allowed_and_rejects_denied_roots(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside_directory:
+            allowed = Path(directory) / "allowed"
+            repository = allowed / "repository"
+            repository.mkdir(parents=True)
+            denied = Path(outside_directory) / "repository"
+            denied.mkdir()
+            payload = {"repository_path": str(repository), "command": "false", "failure_text": "failed"}
+            request = sanitize_intake(payload, (allowed,))
+            self.assertEqual(Path(request.repository_path), repository.resolve())
+            with self.assertRaises(ValueError):
+                sanitize_intake({**payload, "repository_path": str(denied)}, (allowed,))
+
     def test_sanitizes_known_fields_and_ignores_unknown_agent_instructions(self):
         request = sanitize_intake(
             {

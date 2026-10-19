@@ -46,6 +46,7 @@ _ALIASES = {
 }
 _APPROVED_EXECUTABLES = frozenset({"cargo", "dotnet", "go", "make", "mvn", "npm", "pytest", "python", "python3"})
 _APPROVED_BUILD_TARGETS = frozenset({"all", "build", "check", "lint", "test", "tests", "verify"})
+MAX_EXPERIMENT_TIMEOUT_SECONDS = 300.0
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,9 @@ class ExperimentSpec:
     parent_commit: str | None = None
     regression_test: str | Sequence[str] | None = None
     timeout_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        validate_experiment_timeout(self.timeout_seconds)
 
     @property
     def normalized_kind(self) -> str:
@@ -126,11 +130,10 @@ def run_experiment(spec: ExperimentSpec, workspace: os.PathLike[str] | str, runn
 
     if not isinstance(spec, ExperimentSpec):
         raise TypeError("experiment spec is required")
+    validate_experiment_timeout(spec.timeout_seconds)
     kind = spec.normalized_kind
     if kind not in EXPERIMENT_KINDS:
         raise ValueError("experiment kind is not in the explicit ProofFix vocabulary")
-    if spec.timeout_seconds <= 0:
-        raise ValueError("experiment timeout must be positive")
     if kind == "controlled_environment" and len(spec.controlled_environment) != 1:
         raise ValueError("controlled environment experiments must change exactly one variable")
     root = Path(workspace).expanduser().resolve(strict=False)
@@ -200,6 +203,19 @@ def run_experiment(spec: ExperimentSpec, workspace: os.PathLike[str] | str, runn
         parent_exit_code=getattr(parent_result, "exit_code", getattr(parent_result, "returncode", None)) if parent_result is not None else None,
         comparison=comparison,
     )
+
+
+def validate_experiment_timeout(value: Any) -> float:
+    """Validate the timeout shared by the spec, runner, and HTTP boundary."""
+
+    import math
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("experiment timeout must be finite, positive, and no greater than 300 seconds")
+    normalized = float(value)
+    if not math.isfinite(normalized) or not 0 < normalized <= MAX_EXPERIMENT_TIMEOUT_SECONDS:
+        raise ValueError("experiment timeout must be finite, positive, and no greater than 300 seconds")
+    return normalized
 
 
 def _safe_argv(command: str | Sequence[str]) -> list[str]:

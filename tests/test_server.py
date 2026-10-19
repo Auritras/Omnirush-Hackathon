@@ -14,7 +14,7 @@ class ServerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.server = create_server(ServerConfig(data_root=root / "data", port=0, max_body_bytes=256))
+        self.server = create_server(ServerConfig(data_root=root / "data", allowed_roots=(Path.cwd(), root), port=0, max_body_bytes=256))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.connection = HTTPConnection(self.server.server_address[0], self.server.server_address[1])
@@ -145,6 +145,16 @@ class ServerTests(unittest.TestCase):
                 _verification_plan({**base, "timeout_seconds": value})
         self.assertEqual(_verification_plan({**base, "timeout_seconds": 300}).timeout_seconds, 300)
 
+    def test_experiment_route_rejects_invalid_timeout_and_accepts_boundaries(self):
+        status, _, body = self.request("POST", "/api/runs", {"repository_path": ".", "command": "false", "failure_text": "f"})
+        run_id = json.loads(body)["run_id"]
+        self.assertEqual(self.request("POST", f"/api/runs/{run_id}/diagnose", {})[0], 409)
+        for value in (float("inf"), float("nan"), 301):
+            with self.subTest(value=value):
+                status, _, body = self.request("POST", f"/api/runs/{run_id}/experiment", {"kind": "named_test_or_build", "command": "python --version", "timeout_seconds": value})
+                self.assertEqual(status, 400)
+                self.assertIn(json.loads(body)["error"], {"malformed JSON body", "experiment timeout must be finite, positive, and no greater than 300 seconds"})
+
     def test_bounded_request_body_is_rejected(self):
         status, _, body = self.request("POST", "/api/runs", {"repository_path": ".", "command": "false", "failure_text": "x" * 300})
         self.assertEqual(status, 413)
@@ -198,7 +208,7 @@ class ServerTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
         self.connection.close()
-        self.server = create_server(ServerConfig(data_root=Path(self.tmp.name) / "demo-data", port=0, demo=True, repository=Path(self.tmp.name), session_client=object()))
+        self.server = create_server(ServerConfig(data_root=Path(self.tmp.name) / "demo-data", allowed_roots=(Path(self.tmp.name),), port=0, demo=True, repository=Path(self.tmp.name), session_client=object()))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.connection = HTTPConnection(self.server.server_address[0], self.server.server_address[1])
@@ -250,7 +260,7 @@ class ServerTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
         old_connection.close()
-        self.server = create_server(ServerConfig(data_root=root / "lifecycle-data", port=0, max_body_bytes=65536))
+        self.server = create_server(ServerConfig(data_root=root / "lifecycle-data", allowed_roots=(root,), port=0, max_body_bytes=65536))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.connection = HTTPConnection(self.server.server_address[0], self.server.server_address[1])
@@ -305,6 +315,14 @@ class ServerTests(unittest.TestCase):
         status, _, body = self.request("POST", f"/api/runs/{run_id}/export", {"format": "json"})
         self.assertEqual(status, 200)
         self.assertTrue(Path(json.loads(body)["path"]).is_file())
+
+    def test_http_repository_intake_enforces_configured_allowed_roots(self):
+        with tempfile.TemporaryDirectory() as outside_directory:
+            outside = Path(outside_directory) / "repository"
+            outside.mkdir()
+            status, _, body = self.request("POST", "/api/runs", {"repository_path": str(outside), "command": "false", "failure_text": "f"})
+            self.assertEqual(status, 400)
+            self.assertIn("allowed roots", json.loads(body)["error"])
 
 
 if __name__ == "__main__":

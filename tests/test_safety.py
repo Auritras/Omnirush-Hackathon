@@ -151,6 +151,27 @@ class WorkspaceSafetyTests(unittest.TestCase):
                 manager.snapshot_repository(nested)
             self.assertFalse((root / "run").exists())
 
+    def test_workspace_repository_is_checked_against_configured_allowed_roots(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside_directory:
+            root = Path(directory)
+            allowed = root / "allowed"
+            repository = allowed / "repository"
+            repository.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+            subprocess.run(["git", "config", "user.email", "proofix@example.test"], cwd=repository, check=True)
+            subprocess.run(["git", "config", "user.name", "ProofFix Tests"], cwd=repository, check=True)
+            (repository / "tracked.txt").write_text("ok\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=repository, check=True)
+            subprocess.run(["git", "commit", "-qm", "initial"], cwd=repository, check=True)
+            outside = Path(outside_directory) / "repository"
+            outside.mkdir()
+            manager = WorkspaceManager(root / "run", allowed_roots=(allowed,))
+            snapshot = manager.snapshot_repository(repository)
+            self.assertEqual(snapshot.repository, repository.resolve())
+            manager.cleanup(snapshot)
+            with self.assertRaises(ValueError):
+                manager.snapshot_repository(outside)
+
     def test_run_root_inside_source_is_rejected_without_source_mutation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

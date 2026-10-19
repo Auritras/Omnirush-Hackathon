@@ -26,6 +26,12 @@ cp .env.example .env
 No credentials are needed for the offline baseline. Keep any local secrets in
 `.env`; that file is ignored by Git.
 
+`PROOFIX_DATA_ROOT` defaults to `.proofix-data`. Repository intake is
+root-authorized: `PROOFIX_ALLOWED_ROOTS` is a path-separated list of folders
+that may contain repositories and defaults to the data root. The CLI accepts
+the equivalent repeatable `--allowed-root` option; add a repository's parent
+explicitly when running ProofFix against a repository outside `.proofix-data`.
+
 ## Test
 
 Run the single supported offline test command:

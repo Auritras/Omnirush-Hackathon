@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from urllib.parse import urlparse
 
 from .models import MAX_INLINE_FIELD
+from .paths import resolve_repository
 from .redaction import redact_text
 
 
@@ -76,7 +77,10 @@ class IntakeRequest:
         }
 
 
-def sanitize_intake(payload: Mapping[str, Any]) -> IntakeRequest:
+def sanitize_intake(
+    payload: Mapping[str, Any],
+    allowed_roots: Any | None = None,
+) -> IntakeRequest:
     """Select, bound, and redact intake fields before persistence or prompting."""
 
     if not isinstance(payload, Mapping):
@@ -98,7 +102,11 @@ def sanitize_intake(payload: Mapping[str, Any]) -> IntakeRequest:
     branch = payload.get("branch")
     if branch is not None and (not isinstance(branch, str) or not _BRANCH.fullmatch(branch) or ".." in branch or branch.startswith(("/", "-"))):
         raise ValueError("branch is invalid")
-    return IntakeRequest(repository_path, command, failure_text, constraints, issue_url, pr_url, commit_sha, branch)
+    request = IntakeRequest(repository_path, command, failure_text, constraints, issue_url, pr_url, commit_sha, branch)
+    if allowed_roots is not None:
+        repository = resolve_repository(request.repository_path, allowed_roots)
+        request = IntakeRequest(str(repository), request.command, request.failure_text, request.constraints, request.issue_url, request.pr_url, request.commit_sha, request.branch)
+    return request
 
 
 def _constraints(value: Any) -> tuple[str, ...]:

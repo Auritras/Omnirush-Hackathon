@@ -13,11 +13,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Mapping
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from .experiments import validate_experiment_timeout
 from .intake import sanitize_intake
 from .models import DomainError
 from .omnirush import OmniRushSessionClient, RecordedSessionClient
 from .orchestrator import ProofFixOrchestrator
-from .paths import PathSafetyError, ensure_contained, safe_artifact_path
+from .paths import PathSafetyError, ensure_contained, resolve_repository, safe_artifact_path
 from .reports import render_json, render_markdown, write_report
 from .redaction import redact_text
 from .runner import run_command
@@ -45,12 +46,13 @@ class ServerConfig:
     integrations that do not want to import this dataclass.
     """
 
-    data_root: Path | str = Path(".proofix")
+    data_root: Path | str = Path(".proofix-data")
     host: str = "127.0.0.1"
     port: int = 8000
     max_body_bytes: int = MAX_REQUEST_BODY
     max_artifact_bytes: int = MAX_ARTIFACT_BYTES
     repository: Path | str | None = None
+    allowed_roots: tuple[Path | str, ...] | list[Path | str] | Path | str | None = None
     recorded_fixture: Path | str | None = None
     session_client: OmniRushSessionClient | Any | None = None
     runner: Any = run_command
@@ -64,6 +66,19 @@ class ServerConfig:
             raise ValueError("port must be between 0 and 65535")
         if self.max_body_bytes <= 0 or self.max_artifact_bytes <= 0:
             raise ValueError("request and artifact limits must be positive")
+        raw_roots = self.allowed_roots
+        if raw_roots is None:
+            roots = (root,)
+        elif isinstance(raw_roots, (str, bytes, Path)):
+            roots = (Path(raw_roots).expanduser().resolve(strict=False),)
+        else:
+            roots = tuple(Path(value).expanduser().resolve(strict=False) for value in raw_roots)
+        if not roots:
+            raise ValueError("at least one allowed repository root is required")
+        if self.demo and root not in roots:
+            roots = (*roots, root)
+        if self.repository is not None and not self.demo:
+            resolve_repository(self.repository, roots)
         return ServerConfig(
             data_root=root,
             host=self.host,
@@ -71,6 +86,7 @@ class ServerConfig:
             max_body_bytes=self.max_body_bytes,
             max_artifact_bytes=self.max_artifact_bytes,
             repository=_default_fixture_repository() if self.demo else self.repository,
+            allowed_roots=roots,
             recorded_fixture=_default_recorded_fixture() if self.demo else self.recorded_fixture,
             session_client=None if self.demo else self.session_client,
             runner=self.runner,
@@ -85,7 +101,7 @@ class ProofFixHTTPServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], config: ServerConfig):
         self.config = config
         self.store = RunStore(config.data_root)
-        self.workspace_manager = WorkspaceManager(config.data_root / "workspace-root")
+        self.workspace_manager = WorkspaceManager(config.data_root / "workspace-root", config.allowed_roots)
         self.demo_repository = _materialize_demo_fixture(config.data_root) if config.demo else None
         if config.demo:
             session_client = RecordedSessionClient(config.recorded_fixture or _default_recorded_fixture())
@@ -95,7 +111,7 @@ class ProofFixHTTPServer(ThreadingHTTPServer):
             fixture = config.recorded_fixture
             session_client = RecordedSessionClient(fixture) if fixture is not None else RecordedSessionClient()
         metadata = {"mode": "recorded/demo", "provenance": "recorded/demo"} if config.demo else None
-        self.orchestrator = ProofFixOrchestrator(self.store, self.workspace_manager, config.runner, session_client, metadata)
+        self.orchestrator = ProofFixOrchestrator(self.store, self.workspace_manager, config.runner, session_client, metadata, config.allowed_roots)
         super().__init__(address, _make_handler())
 
 
@@ -280,7 +296,7 @@ def _make_handler():
                     }
                 else:
                     data = dict(payload)
-                run_id = self.server.orchestrator.start_run(sanitize_intake(data))
+                run_id = self.server.orchestrator.start_run(sanitize_intake(data, self.server.config.allowed_roots))
                 return 201, "application/json; charset=utf-8", self.server.store.get_run(run_id).to_dict()
             if len(route) < 3 or route[0] != "runs":
                 raise _HTTPError(404, "not found")
@@ -310,6 +326,7 @@ def _make_handler():
                 unknown = set(payload).difference(allowed)
                 if unknown:
                     raise _HTTPError(400, "experiment contains unsupported fields")
+                validate_experiment_timeout(payload.get("timeout_seconds", 30.0))
                 result = orchestrator.run_experiment(run_id, payload)
             elif action in {"propose", "patch"}:
                 result = orchestrator.propose_patch(run_id, _required_text(payload, "diff"), _required_text(payload, "regression_test"), payload.get("scope"))
@@ -485,7 +502,7 @@ def _required_plan_value(payload: Mapping[str, Any], *keys: str):
 def _materialize_demo_fixture(data_root: Path) -> Path:
     """Create an isolated, committed demo repository inside controlled run data."""
     source = _default_fixture_repository()
-    destination = data_root / "demo-fixture"
+    destination = ensure_contained(data_root / "demo-fixture", data_root)
     try:
         head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=destination, text=True, stderr=subprocess.PIPE).strip()
         if head:

@@ -9,6 +9,24 @@ from proofix.runner import CommandPolicy, run_command
 
 
 class ExperimentTests(unittest.TestCase):
+    def test_timeout_rejects_non_finite_non_positive_and_oversized_values(self):
+        for value in (True, False, float("inf"), float("nan"), 0, -1, 301):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ExperimentSpec("named_test_or_build", "python --version", timeout_seconds=value)
+        for value in (0.001, 300):
+            with self.subTest(value=value):
+                self.assertEqual(ExperimentSpec("named_test_or_build", "python --version", timeout_seconds=value).timeout_seconds, value)
+
+    def test_runner_rechecks_timeout_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            spec = object.__new__(ExperimentSpec)
+            object.__setattr__(spec, "kind", "named_test_or_build")
+            object.__setattr__(spec, "command", "python --version")
+            object.__setattr__(spec, "timeout_seconds", float("inf"))
+            with self.assertRaises(ValueError):
+                run_experiment(spec, workspace, run_command)
+
     def test_each_named_experiment_records_evidence_and_hypothesis(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

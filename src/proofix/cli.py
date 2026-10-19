@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import re
 
-from .paths import ensure_contained
+from .paths import ensure_contained, resolve_repository
 from .reports import write_report
 from .server import ServerConfig, create_server
 from .store import RunStore
@@ -41,7 +41,11 @@ def main(argv=None) -> int:
         demo=args.command == "demo",
         repository=Path(args.repository) if args.repository else None,
         recorded_fixture=Path(args.recorded_fixture) if args.recorded_fixture else None,
+        allowed_roots=_allowed_roots(args),
     )
+    if args.repository:
+        roots = config.allowed_roots if config.allowed_roots is not None else config.data_root
+        resolve_repository(args.repository, roots)
     server = create_server(config)
     try:
         address = getattr(server, "server_address", (args.host, args.port))
@@ -74,6 +78,18 @@ def _server_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--data-root", default=os.environ.get("PROOFIX_DATA_ROOT", ".proofix-data"))
     parser.add_argument("--repository")
     parser.add_argument("--recorded-fixture")
+    parser.add_argument("--allowed-root", action="append", dest="allowed_root")
+
+
+def _allowed_roots(args):
+    values = args.allowed_root
+    if values is None:
+        configured = os.environ.get("PROOFIX_ALLOWED_ROOTS", "")
+        values = [item for item in configured.split(os.pathsep) if item] or None
+    if values is None:
+        return None
+    expanded = [item for value in values for item in value.split(os.pathsep) if item]
+    return tuple(Path(item).expanduser().resolve(strict=False) for item in expanded) or None
 
 
 if __name__ == "__main__":

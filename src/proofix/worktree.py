@@ -12,7 +12,7 @@ import tarfile
 from typing import Any
 from uuid import uuid4
 
-from .paths import ensure_contained
+from .paths import ensure_contained, resolve_repository
 
 
 _SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".secret"}
@@ -126,8 +126,19 @@ class WorkspaceSnapshot:
 class WorkspaceManager:
     """Create and remove snapshots whose lifecycle is owned by this manager."""
 
-    def __init__(self, run_root: os.PathLike[str] | str):
+    def __init__(
+        self,
+        run_root: os.PathLike[str] | str,
+        allowed_roots: os.PathLike[str] | str | list[os.PathLike[str] | str] | tuple[os.PathLike[str] | str, ...] | None = None,
+    ):
         self.run_root = Path(run_root).expanduser().resolve(strict=False)
+        if allowed_roots is None:
+            allowed_roots = (self.run_root.parent,)
+        elif isinstance(allowed_roots, (str, bytes, os.PathLike)):
+            allowed_roots = (allowed_roots,)
+        self.allowed_roots = tuple(Path(root).expanduser().resolve(strict=False) for root in allowed_roots)
+        if not self.allowed_roots:
+            raise ValueError("at least one allowed repository root is required")
         self._workspaces_root = self.run_root / "workspaces"
         self._token = object()
         self._active: dict[Path, WorkspaceSnapshot] = {}
@@ -141,9 +152,7 @@ class WorkspaceManager:
     ) -> WorkspaceSnapshot:
         """Create a clean committed or explicitly dirty disposable workspace."""
 
-        source = Path(repository).expanduser().resolve(strict=False)
-        if not source.exists() or not source.is_dir():
-            raise ValueError("repository must be an existing directory")
+        source = resolve_repository(repository, self.allowed_roots)
         try:
             self.run_root.relative_to(source)
         except ValueError:

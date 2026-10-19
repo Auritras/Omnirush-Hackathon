@@ -29,17 +29,19 @@ class ProofFixOrchestrator:
         runner: Any = run_command,
         session_client: OmniRushSessionClient | None = None,
         run_metadata: Mapping[str, Any] | None = None,
+        allowed_roots: Any | None = None,
     ):
         self.store = store
         self.workspace_manager = workspace_manager
         self.runner = runner
         self.session_client = session_client if session_client is not None else RecordedSessionClient()
         self.run_metadata = dict(run_metadata or {})
+        self.allowed_roots = allowed_roots
         self._snapshots: dict[str, Any] = {}
         self._patches: dict[str, Any] = {}
 
     def start_run(self, request: IntakeRequest | Mapping[str, Any]) -> str:
-        intake = sanitize_intake(request.to_dict() if isinstance(request, IntakeRequest) else request)
+        intake = sanitize_intake(request.to_dict() if isinstance(request, IntakeRequest) else request, self.allowed_roots)
         intake_data = intake.to_dict()
         # Metadata is host-owned provenance (for example demo/recorded mode),
         # never user instructions and never a client-provided status field.
@@ -58,7 +60,7 @@ class ProofFixOrchestrator:
         if run.state != "reproducing":
             raise DomainError(f"run is not ready for reproduction: {run.state}")
         try:
-            intake = sanitize_intake(run.intake)
+            intake = sanitize_intake(run.intake, self.allowed_roots)
             snapshot = self.workspace_manager.snapshot_repository(intake.repository_path)
             self._snapshots[run_id] = snapshot
             result = self._run_local(intake.command, snapshot)
@@ -119,7 +121,7 @@ class ProofFixOrchestrator:
         if self.session_client is None:
             raise DomainError("no OmniRush session client is configured")
         context = {
-            "intake": sanitize_intake(run.intake).agent_context(),
+            "intake": sanitize_intake(run.intake, self.allowed_roots).agent_context(),
             "reproduction_evidence": list(run.evidence),
             "untrusted_context": True,
         }
@@ -298,7 +300,7 @@ class ProofFixOrchestrator:
 
     def _snapshot_for_verification(self, run_id: str, run: RunRecord):
         existing = self._snapshots.get(run_id)
-        repository = sanitize_intake(run.intake).repository_path
+        repository = sanitize_intake(run.intake, self.allowed_roots).repository_path
         snapshot_record = next((item for item in run.evidence if isinstance(item, Mapping) and item.get("kind") == "repository_snapshot"), None)
         details = snapshot_record.get("details", {}) if isinstance(snapshot_record, Mapping) else {}
         expected_commit = details.get("commit") if isinstance(details, Mapping) else None
