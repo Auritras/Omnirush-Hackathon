@@ -44,6 +44,17 @@ def _assert_pid_gone(test_case: unittest.TestCase, pid_file: Path) -> None:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_timeout_policy_rejects_invalid_values_and_accepts_boundaries(self):
+        for value in (True, float("nan"), float("inf"), 0, -1, 301):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    CommandPolicy(allowed_commands={"python"}, timeout_seconds=value)
+
+        for value in (0.001, 300):
+            with self.subTest(value=value):
+                policy = CommandPolicy(allowed_commands={"python"}, timeout_seconds=value)
+                self.assertEqual(policy.timeout_seconds, value)
+
     def test_python_investigation_uses_runtime_path(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

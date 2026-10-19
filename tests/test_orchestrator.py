@@ -233,6 +233,43 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(result.state, "verified")
             self.assertEqual(RunStore(root / "runs").replay(run_id).state, "verified")
 
+    def test_restart_rejects_patch_proposal_when_repository_is_outside_authorized_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = self._repository(root, "import sys\nprint('failure')\nsys.exit(1)\n")
+            store = RunStore(root / "runs")
+            orchestrator = ProofFixOrchestrator(
+                store,
+                WorkspaceManager(root / "workspace-root", allowed_roots=(root,)),
+                run_command,
+                RecordedSessionClient(Path("fixtures/omnirush/reproducible-run.json")),
+                allowed_roots=(root,),
+            )
+            run_id = orchestrator.start_run(sanitize_intake({"repository_path": str(repository), "command": "python case.py", "failure_text": "failure"}))
+            self.assertEqual(orchestrator.advance_reproduction(run_id).state, "reproduced")
+            self.assertEqual(orchestrator.advance_diagnosis(run_id).state, "diagnosing")
+
+            diff = """diff --git a/case.py b/case.py
+--- a/case.py
++++ b/case.py
+@@ -1,3 +1 @@
+-import sys
+-print('failure')
+-sys.exit(1)
++print('fixed')
+"""
+            restarted = ProofFixOrchestrator(
+                store,
+                WorkspaceManager(root / "restart-workspace-root", allowed_roots=(root / "unrelated",)),
+                run_command,
+                RecordedSessionClient(Path("fixtures/omnirush/reproducible-run.json")),
+                allowed_roots=(root / "unrelated",),
+            )
+            with self.assertRaises(ValueError):
+                restarted.propose_patch(run_id, diff, "python -m unittest tests.test_case")
+            self.assertEqual(store.get_run(run_id).state, "diagnosing")
+            self.assertIsNone(store.get_run(run_id).patch)
+
     def test_approval_requires_explicit_persisted_digest_and_run_binding(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -171,8 +171,9 @@ class ProofFixOrchestrator:
         if run.state not in {"diagnosing", "experimenting"}:
             raise DomainError(f"patch proposals are gated by diagnosis: {run.state}")
         snapshot = self._snapshots.get(run_id)
-        repository = getattr(snapshot, "path", getattr(snapshot, "workspace", snapshot)) if snapshot is not None else sanitize_intake(run.intake).repository_path
-        original_command = sanitize_intake(run.intake).command
+        intake = sanitize_intake(run.intake, self.allowed_roots)
+        repository = getattr(snapshot, "path", getattr(snapshot, "workspace", snapshot)) if snapshot is not None else intake.repository_path
+        original_command = intake.command
         try:
             validate_guarded_command(regression_test or "", repository, "proposed_regression_test")
         except Exception as exc:

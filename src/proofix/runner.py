@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
+import math
 import os
 from pathlib import Path
 import re
@@ -48,6 +49,7 @@ _DEFAULT_COMMANDS = frozenset(
         "true",
     }
 )
+MAX_COMMAND_TIMEOUT_SECONDS = 300.0
 
 
 @dataclass(frozen=True)
@@ -74,8 +76,13 @@ class CommandPolicy:
         commands = frozenset(str(item) for item in self.allowed_commands)
         if not commands or any(not item or "/" in item or "\\" in item for item in commands):
             raise ValueError("allowed_commands must contain executable names")
-        if self.timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
+        if (
+            isinstance(self.timeout_seconds, bool)
+            or not isinstance(self.timeout_seconds, (int, float))
+            or not math.isfinite(float(self.timeout_seconds))
+            or not 0 < float(self.timeout_seconds) <= MAX_COMMAND_TIMEOUT_SECONDS
+        ):
+            raise ValueError("timeout_seconds must be finite, positive, and no greater than 300 seconds")
         if self.max_inline_output <= 0:
             raise ValueError("max_inline_output must be positive")
         if self.max_output_bytes <= 0:
