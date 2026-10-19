@@ -92,18 +92,19 @@ const validPlan = {
   scope_files: ["parser.py"],
   timeout_seconds: 30,
 };
+const runtimeAbsolutePath = `${process.cwd()}/parser.py`;
 const cases = [
   ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, timeout_seconds: Infinity } }],
   ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, timeout_seconds: NaN } }],
   ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, timeout_seconds: 301 } }],
   ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, relevant_tests: Array(65).fill("python -m unittest tests.test_parser") } }],
   ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, scope_files: ["../parser.py"] } }],
-  ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, scope_files: ["/tmp/parser.py"] } }],
+  ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, scope_files: [runtimeAbsolutePath] } }],
   ["proofix.verify_run", { run_id: "run-validation", plan: { ...validPlan, original_failure_command: "python -m unittest tests.test_parser; rm -rf /" } }],
   ["proofix.approve_patch", { run_id: "run-validation", actor: "operator", timestamp: "2026-02-30T00:00:00Z", patch_digest: "sha256:" + "a".repeat(64) }],
   ["proofix.approve_patch", { run_id: "run-validation", actor: "operator", timestamp: "2026-01-01T00:00:00+00:00", patch_digest: "sha256:" + "a".repeat(64) }],
-  ["proofix.start_run", { repository_path: "/tmp/repo", command: "python -m unittest tests.test_parser", failure_text: "failure", constraints: Array(17).fill("x") }],
-  ["proofix.start_run", { repository_path: "/tmp/repo", command: "python -m unittest tests.test_parser", failure_text: "x".repeat(4097) }],
+  ["proofix.start_run", { repository_path: runtimeAbsolutePath, command: "python -m unittest tests.test_parser", failure_text: "failure", constraints: Array(17).fill("x") }],
+  ["proofix.start_run", { repository_path: runtimeAbsolutePath, command: "python -m unittest tests.test_parser", failure_text: "x".repeat(4097) }],
 ];
 for (const [name, args] of cases) {
   let rejected = false;

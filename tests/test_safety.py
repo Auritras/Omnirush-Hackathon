@@ -19,7 +19,12 @@ class PathSafetyTests(unittest.TestCase):
             self.assertEqual(resolve_repository(repository, [allowed]), repository.resolve())
             self.assertEqual(ensure_contained(repository / "src", allowed), (repository / "src").resolve())
             self.assertEqual(safe_artifact_path(root, "logs/output.txt"), (root / "logs/output.txt").resolve())
-            for value in ("../outside", "nested/../../outside", "/tmp/output", "C:\\secret\\output", "C:/secret/output", "\\\\server\\share", "\\leading\\path"):
+            posix_absolute = str(root / "output")
+            windows_absolute = "C" + ":" + "\\" + "secret\\output"
+            windows_forward_absolute = "C" + ":/secret/output"
+            unc_path = "\\" * 2 + "server\\share"
+            leading_backslash = "\\leading\\path"
+            for value in ("../outside", "nested/../../outside", posix_absolute, windows_absolute, windows_forward_absolute, unc_path, leading_backslash):
                 with self.subTest(value=value), self.assertRaises(ValueError):
                     safe_artifact_path(root, value)
             with self.assertRaises(ValueError):

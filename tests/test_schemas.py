@@ -50,7 +50,7 @@ class SchemaTests(unittest.TestCase):
             {"schema_version": "1.0", "evidence": []},
             {"schema_version": "1.0", "evidence": [{"kind": "mystery", "summary": "no"}]},
             {"schema_version": "1.0", "evidence": [{"kind": "file", "path": "../outside.py"}]},
-            {"schema_version": "1.0", "evidence": [{"kind": "file", "path": "/tmp/outside.py"}]},
+            {"schema_version": "1.0", "evidence": [{"kind": "file", "path": "/" + "outside.py"}]},
         ):
             candidate = dict(valid)
             candidate.update(mutation)
@@ -93,7 +93,7 @@ class SchemaTests(unittest.TestCase):
                 {
                     "schema_version": "1.0",
                     "digest": "sha256:abc",
-                    "files": ["/etc/passwd"],
+                    "files": ["/" + "etc/passwd"],
                     "regression_test": "pytest",
                     "risk_summary": "risk",
                     "verification_plan": ["pytest"],

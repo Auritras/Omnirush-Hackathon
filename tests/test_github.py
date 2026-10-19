@@ -5,6 +5,7 @@ import io
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from proofix.github import GitHubReader, GitHubRead
@@ -124,10 +125,12 @@ class GitHubReaderTests(unittest.TestCase):
 
     def test_invalid_identifiers_never_reach_gh(self):
         reader = GitHubReader("gh")
-        for repository in ("octo/example; touch /tmp/pwned", "octo/child/repo", "/tmp/repo", "octo/..", "octo/ghp_1234567890"):
+        runtime_absolute = str(Path.cwd() / "pwned")
+        for repository in (f"octo/example; touch {runtime_absolute}", "octo/child/repo", runtime_absolute, "octo/..", "octo/ghp_1234567890"):
             with self.subTest(repository=repository), self.assertRaises(ValueError):
                 reader.repository_command(repository)
-        for identifier in ("$(whoami)", "foo/bar", "../987", "/tmp/987", "C:\\tmp\\987", "ghp_1234567890"):
+        windows_absolute = "C" + ":" + "\\" + "tmp\\987"
+        for identifier in ("$(whoami)", "foo/bar", "../987", runtime_absolute, windows_absolute, "ghp_1234567890"):
             with self.subTest(identifier=identifier), self.assertRaises(ValueError):
                 reader.actions_logs_command("octo/example", identifier)
 

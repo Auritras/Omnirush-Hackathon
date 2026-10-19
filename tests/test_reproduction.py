@@ -23,14 +23,16 @@ class ReproductionTests(unittest.TestCase):
 
     def test_matching_failure_is_reproduced_with_normalized_paths_timestamps_and_redaction(self):
         with tempfile.TemporaryDirectory() as directory:
+            runtime_path = (Path(directory) / "build-123.py").as_posix()
+            expected_path = (Path(directory) / "project" / "app.py").as_posix()
             result = self._run(
                 Path(directory),
-                "import sys\nprint('password=runtime-secret')\nprint('failure at /tmp/build-123.py:2026-10-15T12:34:56Z')\nprint('worker 92341')\nsys.exit(2)\n",
+                f"import sys\nprint('password=runtime-secret')\nprint('failure at {runtime_path}:2026-10-15T12:34:56Z')\nprint('worker 92341')\nsys.exit(2)\n",
             )
             assessment = compare_failure(
                 {
                     "exit_code": 2,
-                    "failure_text": "password=other-secret\nfailure at /home/runner/project/app.py:2025-01-01T00:00:00Z\nworker 10002",
+                    "failure_text": f"password=other-secret\nfailure at {expected_path}:2025-01-01T00:00:00Z\nworker 10002",
                 },
                 result,
             )

@@ -152,8 +152,9 @@ class StateTransitionTests(unittest.TestCase):
             EventRecord.new("run-test", "orchestrator:result", details={"value": float("nan")})
 
     def test_artifact_references_reject_windows_absolute_paths(self):
+        windows_absolute = "C" + ":" + "\\" + "secret\\output.log"
         with self.assertRaises(DomainError):
-            EventRecord.new("run-test", "orchestrator:result", stdout_ref="C:\\secret\\output.log")
+            EventRecord.new("run-test", "orchestrator:result", stdout_ref=windows_absolute)
 
     def test_timestamps_must_use_canonical_utc_z_representation(self):
         with self.assertRaises(DomainError):

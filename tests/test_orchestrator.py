@@ -134,7 +134,7 @@ class OrchestratorTests(unittest.TestCase):
     def test_orchestrator_prefixed_client_status_cannot_transition_state(self):
         with tempfile.TemporaryDirectory() as directory:
             store = RunStore(Path(directory))
-            run = store.create_run({"repository_path": "/tmp/repo", "command": "false", "failure_text": "failure"})
+            run = store.create_run({"repository_path": str(Path.cwd() / "repository"), "command": "false", "failure_text": "failure"})
             with self.assertRaises(DomainError):
                 transition(run, "triaging", event_kind="orchestrator:client_status", details={"status": "verified"})
             with self.assertRaises(DomainError):

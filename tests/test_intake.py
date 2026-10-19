@@ -5,6 +5,9 @@ from pathlib import Path
 from proofix.intake import IntakeRequest, sanitize_intake
 
 
+REPOSITORY_PATH = str(Path.cwd() / "portable-repository")
+
+
 class IntakeTests(unittest.TestCase):
     def test_repository_authorization_accepts_allowed_and_rejects_denied_roots(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside_directory:
@@ -22,7 +25,7 @@ class IntakeTests(unittest.TestCase):
     def test_sanitizes_known_fields_and_ignores_unknown_agent_instructions(self):
         request = sanitize_intake(
             {
-                "repository_path": "/tmp/repository",
+                "repository_path": REPOSITORY_PATH,
                 "command": " pytest tests/test_parser.py ",
                 "failure_text": "password=secret-value\nAssertionError: boom",
                 "constraints": ["do not change dependencies", "  keep the fix small  "],
@@ -50,22 +53,22 @@ class IntakeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             sanitize_intake({"repository_path": "../outside", "command": "false", "failure_text": "failed"})
         with self.assertRaises(ValueError):
-            sanitize_intake({"repository_path": "/tmp/repo", "command": "x" * 4097, "failure_text": "failed"})
+            sanitize_intake({"repository_path": REPOSITORY_PATH, "command": "x" * 4097, "failure_text": "failed"})
         with self.assertRaises(ValueError):
-            sanitize_intake({"repository_path": "/tmp/repo", "command": "false", "failure_text": "x" * 4097})
+            sanitize_intake({"repository_path": REPOSITORY_PATH, "command": "false", "failure_text": "x" * 4097})
         with self.assertRaises(ValueError):
-            sanitize_intake({"repository_path": "/tmp/repo", "command": "false", "failure_text": "failed", "issue_url": "javascript:alert(1)"})
+            sanitize_intake({"repository_path": REPOSITORY_PATH, "command": "false", "failure_text": "failed", "issue_url": "javascript:alert(1)"})
         with self.assertRaises(ValueError):
-            sanitize_intake({"repository_path": "/tmp/repo", "command": "false", "failure_text": "failed", "commit_sha": "not-a-sha"})
+            sanitize_intake({"repository_path": REPOSITORY_PATH, "command": "false", "failure_text": "failed", "commit_sha": "not-a-sha"})
         with self.assertRaises(ValueError):
-            sanitize_intake({"repository_path": "/tmp/repo", "command": "false", "failure_text": "failed", "constraints": ["x" * 4097]})
+            sanitize_intake({"repository_path": REPOSITORY_PATH, "command": "false", "failure_text": "failed", "constraints": ["x" * 4097]})
 
     def test_required_fields_are_present_and_serializable(self):
-        request = sanitize_intake({"repository_path": "/tmp/repo", "command": "false", "failure_text": "failed"})
+        request = sanitize_intake({"repository_path": REPOSITORY_PATH, "command": "false", "failure_text": "failed"})
         self.assertEqual(
             request.to_dict(),
             {
-                "repository_path": "/tmp/repo",
+                "repository_path": REPOSITORY_PATH,
                 "command": "false",
                 "failure_text": "failed",
                 "constraints": [],
@@ -78,7 +81,7 @@ class IntakeTests(unittest.TestCase):
 
     def test_raw_request_is_normalized_and_empty_failure_text_is_rejected(self):
         request = IntakeRequest(
-            repository_path="/tmp/repo",
+            repository_path=REPOSITORY_PATH,
             command="false",
             failure_text="API_KEY=raw-secret",
             constraints=("password=constraint-secret",),
@@ -86,7 +89,7 @@ class IntakeTests(unittest.TestCase):
         self.assertNotIn("raw-secret", request.failure_text)
         self.assertNotIn("constraint-secret", request.constraints[0])
         with self.assertRaises(ValueError):
-            IntakeRequest(repository_path="/tmp/repo", command="false", failure_text="")
+            IntakeRequest(repository_path=REPOSITORY_PATH, command="false", failure_text="")
 
 
 if __name__ == "__main__":
