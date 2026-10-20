@@ -183,7 +183,7 @@ class RunnerTests(unittest.TestCase):
             parent = _script(
                 workspace,
                 "parent.py",
-                "import pathlib, subprocess, sys, time\nsubprocess.Popen([sys.executable, 'child.py', sys.argv[1], sys.argv[2]])\nprint('x' * 100000, flush=True)\ntime.sleep(30)\n",
+                "import pathlib, subprocess, sys, time\nsubprocess.Popen([sys.executable, 'child.py', sys.argv[1], sys.argv[2]])\ndeadline = time.monotonic() + 5\nwhile not pathlib.Path(sys.argv[1]).exists() and time.monotonic() < deadline:\n    time.sleep(0.01)\nprint('x' * 100000, flush=True)\ntime.sleep(30)\n",
             )
             pid_file = workspace / "child.pid"
             survived = workspace / "child-survived"

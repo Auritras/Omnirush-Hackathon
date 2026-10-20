@@ -48,6 +48,7 @@
       currentEvents = [];
       renderEmpty();
       announce("No run selected. Add a run ID to the URL.");
+      await loadDemoStatus();
       return;
     }
     setText("connection-label", "Reading server snapshot…");
@@ -65,6 +66,37 @@
       renderEmpty();
       setText("connection-label", "Snapshot unavailable");
       announce(`Snapshot unavailable: ${error.message}`);
+    }
+  }
+
+  async function loadDemoStatus() {
+    const button = $("demo-start-button");
+    if (!button) return;
+    try {
+      const status = await api("/api/demo");
+      button.disabled = !status.enabled;
+      button.textContent = status.enabled ? "Start demo run" : "Demo unavailable";
+      button.title = status.enabled ? "Create the fixed recorded demo run" : "This server is running in local mode";
+    } catch (_) {
+      button.disabled = true;
+      button.textContent = "Demo unavailable";
+    }
+  }
+
+  async function startDemoRun() {
+    const button = $("demo-start-button");
+    if (!button) return;
+    button.disabled = true;
+    try {
+      const run = await api("/api/demo/start", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: "{}" });
+      const url = new URL(window.location.href);
+      url.searchParams.set("run", run.run_id);
+      window.history.replaceState({}, "", url);
+      await loadRun();
+      announce(`Fixed demo run ${run.run_id} started.`);
+    } catch (error) {
+      announce(`Demo run could not start: ${error.message}`);
+      await loadDemoStatus();
     }
   }
 
@@ -419,5 +451,7 @@
   if ($("experiment-button")) $("experiment-button").addEventListener("click", runExperiment);
   if ($("propose-button")) $("propose-button").addEventListener("click", proposePatch);
   if ($("verify-button")) $("verify-button").addEventListener("click", verifyPatch);
+  if ($("demo-start-button")) $("demo-start-button").addEventListener("click", startDemoRun);
+  loadDemoStatus();
   loadRun();
 }());

@@ -212,6 +212,11 @@ class ServerTests(unittest.TestCase):
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.connection = HTTPConnection(self.server.server_address[0], self.server.server_address[1])
+        status, _, body = self.request("GET", "/api/demo")
+        self.assertEqual(status, 200)
+        demo_status = json.loads(body)
+        self.assertTrue(demo_status["enabled"])
+        self.assertEqual(demo_status["omnirush"], "recorded")
         status, _, body = self.request("POST", "/api/runs", {
             "repository_path": str(Path(self.tmp.name) / "malicious-repository"),
             "command": "echo malicious-command",
@@ -223,6 +228,9 @@ class ServerTests(unittest.TestCase):
             "branch": "malicious-branch",
             "status": "verified",
         })
+        self.assertEqual(status, 400)
+        self.assertIn("fixed checked-in fixture", json.loads(body)["error"])
+        status, _, body = self.request("POST", "/api/demo/start", {})
         self.assertEqual(status, 201)
         run = json.loads(body)
         self.assertEqual(run["input"]["mode"], "recorded/demo")
@@ -240,6 +248,20 @@ class ServerTests(unittest.TestCase):
         status, _, body = self.request("GET", f"/api/runs/{run['run_id']}/report?format=json")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["result_label"], "recorded/demo")
+
+    def test_demo_start_rejects_command_and_repository_overrides(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self.connection.close()
+        self.server = create_server(ServerConfig(data_root=Path(self.tmp.name) / "demo-data", allowed_roots=(Path(self.tmp.name),), port=0, demo=True))
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.connection = HTTPConnection(*self.server.server_address)
+        for payload in ({"command": "echo unsafe"}, {"repository_path": str(Path.cwd() / "unsafe-repository")}):
+            status, _, body = self.request("POST", "/api/demo/start", payload)
+            self.assertEqual(status, 400)
+            self.assertIn("overrides", json.loads(body)["error"])
 
     def test_http_lifecycle_reproduction_diagnosis_reject_retry_approval_verify_export(self):
         root = Path(self.tmp.name)

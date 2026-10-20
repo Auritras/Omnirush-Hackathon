@@ -1,159 +1,251 @@
 # ProofFix
 
-ProofFix is a local-first, evidence-backed workflow for investigating failing
-commands. The MVP runs on localhost and uses Python's standard library; it
-does not deploy a hosted service.
+ProofFix is an evidence-backed workflow for investigating a failing command.
+It records the immutable intake, reproduction result, competing diagnosis,
+guarded experiments, patch approval, and deterministic verification as one
+auditable proof chain. The repository is standard-library Python 3.12 with a
+small vanilla JavaScript dashboard.
 
-## Requirements
+## Why the proof gates matter
 
-- Python 3.12
+Failure text and model suggestions are untrusted evidence. ProofFix keeps the
+important boundaries server-owned:
+
+- **Reproduce** records whether the exact failure happened in a disposable
+  workspace; a successful or different failure stops the chain.
+- **Diagnose** records competing specialist hypotheses and their evidence.
+- **Experiment** accepts only the existing guarded vocabulary and command
+  allowlist, rather than arbitrary agent-supplied programs.
+- **Patch** requires a bounded unified diff and an explicit, distinct
+  regression command.
+- **Approve** requires an actor, canonical UTC timestamp, and the persisted
+  patch digest.
+- **Verify** checks the approved patch in a fresh workspace and distinguishes
+  verified, failed, and blocked outcomes.
+
+The dashboard renders persisted snapshots and events; it does not invent
+workflow state in the browser.
+
+## Two-minute hosted demo
+
+After deploying the checked-in Render Blueprint, replace `PUBLIC_DEMO_URL` in
+the commands below with the URL shown by Render. This repository intentionally
+does not claim a live URL until one exists.
+
+1. Open `https://PUBLIC_DEMO_URL/`.
+2. Click **Start demo run**. No run ID or repository path is required.
+3. Review the fixed fixture's recorded reproduction and OmniRush diagnosis.
+4. Advance the visible guarded stages as desired. The dashboard enables only
+   actions allowed by the server snapshot.
+5. Use **Export .md** or **Export .json** to inspect the evidence report.
+6. Check `https://PUBLIC_DEMO_URL/api/demo` for the deployment's restricted
+   demo status and `https://PUBLIC_DEMO_URL/health` for health.
+
+The hosted demo is deliberately restricted: it materializes only the checked-in
+`fixtures/broken-parser-repo`, uses checked-in recorded OmniRush responses,
+rejects repository and command intake overrides, and accepts no GitHub
+credentials. Experiments still pass through the existing guarded vocabulary;
+the service is not a general remote shell.
+
+## Full local mode
+
+### Requirements and setup
+
+- Python 3.12 (pinned by `.python-version`)
 - GNU Make
-- Git (required by the later disposable-worktree workflow)
+- Git, for disposable worktree snapshots
 - Docker, only for the container workflow
 
-The repository pins Python with `.python-version`, declares no third-party
-Python dependencies in `pyproject.toml`, and records that empty dependency set
-in the portable `requirements.lock` file.
-
-## Setup
-
-From a clean checkout, create local configuration from the checked-in example:
+The project has no third-party Python dependencies. `requirements.lock` records
+that empty dependency set. Create local configuration if useful:
 
 ```sh
 cp .env.example .env
 ```
 
-No credentials are needed for the offline baseline. Keep any local secrets in
-`.env`; that file is ignored by Git.
+No credentials are needed for the offline baseline. `.env` is ignored by Git.
+`PROOFIX_DATA_ROOT` defaults to `.proofix-data`; repository intake is limited to
+the path-separated `PROOFIX_ALLOWED_ROOTS` list, which defaults to that data
+root.
 
-`PROOFIX_DATA_ROOT` defaults to `.proofix-data`. Repository intake is
-root-authorized: `PROOFIX_ALLOWED_ROOTS` is a path-separated list of folders
-that may contain repositories and defaults to the data root. The CLI accepts
-the equivalent repeatable `--allowed-root` option; add a repository's parent
-explicitly when running ProofFix against a repository outside `.proofix-data`.
-
-## Test
-
-Run the single supported offline test command:
-
-```sh
-make test
-```
-
-This invokes `unittest discover` with `PYTHONPATH=src` and requires no network
-access or globally installed package.
-
-## Offline demo and dashboard
-
-The local server entry point is started with:
+Start the normal loopback-only server:
 
 ```sh
 make run
 ```
 
-The fixture-backed demo starts the same localhost server with recorded
-OmniRush responses. On startup it automatically materializes
-`fixtures/broken-parser-repo` as a standalone committed repository under the
-configured run-data directory, so no manual Git workaround is needed. Create
-and advance a run through the localhost API, then load that run in the
-dashboard with `?run=RUN_ID`:
+Open `http://127.0.0.1:8000/`. Local intake can use the API or the existing
+run workflow. The equivalent CLI commands run directly from the checkout with
+`PYTHONPATH=src` and do not require a global ProofFix install.
+
+This is a localhost-only server in normal mode; it is intentionally not an
+internet-facing deployment.
+
+The offline fixture demo is also loopback-only by default:
 
 ```sh
 make demo
 ```
 
-To restore the intentionally failing fixture after an experiment, run:
+It uses the checked-in fixture and recorded OmniRush responses. The server
+materializes a standalone committed copy under `.proofix-data/demo-fixture`.
+To restore the intentionally failing source fixture after an experiment:
 
 ```sh
 make fixture-reset
 ```
 
-For the complete reproduction path, use the server-owned demo fixture and
-its guarded API vocabulary. In another terminal, create the run and keep its
-ID:
+### Public-demo bind rule
+
+Normal mode always rejects non-loopback hosts. A non-loopback bind is accepted
+only when both demo mode and the explicit public-demo flag are enabled:
 
 ```sh
-RUN_JSON=$(curl -fsS -X POST http://127.0.0.1:8000/api/runs \
-  -H 'Content-Type: application/json' -d '{}')
-RUN_ID=$(printf '%s' "$RUN_JSON" | python -c 'import json,sys; print(json.load(sys.stdin)["run_id"])')
-curl -fsS -X POST "http://127.0.0.1:8000/api/runs/$RUN_ID/reproduce" \
-  -H 'Content-Type: application/json' -d '{}'
-curl -fsS -X POST "http://127.0.0.1:8000/api/runs/$RUN_ID/diagnose" \
-  -H 'Content-Type: application/json' -d '{}'
+PROOFIX_DEMO=true \
+PROOFIX_PUBLIC_DEMO=true \
+PROOFIX_HOST=0.0.0.0 \
+PROOFIX_DATA_ROOT=.proofix-data \
+make run
 ```
 
-Open `http://127.0.0.1:8000/?run=$RUN_ID` to inspect the authoritative
-snapshot and events. Run a focused guarded experiment through
-`POST /api/runs/$RUN_ID/experiment`, then propose a unified diff with an
-**explicit regression command** through
-`POST /api/runs/$RUN_ID/propose`:
-`{"diff":"...","regression_test":"python -m unittest tests.test_parser","scope":["parser.py"]}`. The regression command must be non-empty and
-different from the original failure command. Read the returned `patch.digest`,
-then approve through the dashboard's **Approve patch** control (or
-`POST /api/runs/$RUN_ID/approve` with `actor`, canonical UTC `timestamp`, and
-`patch_digest`). After approval, submit verification through
-`POST /api/runs/$RUN_ID/verify` with the original command and the same explicit
-regression command. A failed or blocked verification can be sent back with
-`POST /api/runs/$RUN_ID/return-to-diagnosis` and an audit actor/timestamp.
-Finally use **Export .md** and **Export .json** or the export endpoint. The
-server runs commands and verification in disposable workspaces; the source
-fixture remains unchanged.
+`--public-demo` is the equivalent CLI flag. Do not use this configuration for
+an unrestricted deployment. The checked-in Render Blueprint is the restricted
+public-demo configuration.
 
-Both commands run through the source checkout (`PYTHONPATH=src`) rather than
-requiring a global ProofFix installation. The server binds to localhost by
-default; it is not an internet-facing deployment.
+## Feature coverage
 
-To export a persisted run through the same report layer, use the CLI without
-installing ProofFix globally:
+- Immutable, validated, redacted run intake and durable JSONL snapshots/events
+- Clean disposable Git worktree snapshots with source-repository preservation
+- Reproduction comparison with bounded stdout/stderr artifacts
+- Recorded specialist hypotheses and session provenance
+- Guarded named test/build, environment, instrumentation, parent-commit, and
+  runtime-inspection experiments
+- Unified-diff scope validation, digest-bound approval, and deterministic
+  verification
+- Markdown and JSON evidence reports
+- Safe static dashboard rendering with keyboard focus and reduced-motion hooks
+- Optional read-only GitHub metadata integration
+- Offline fixture and recorded OmniRush demo mode
 
-```sh
-PYTHONPATH=src python -m proofix.cli export RUN_ID exports/report.json --format json --data-root .proofix-data
-```
+## Offline, recorded, and live OmniRush
 
-The equivalent Make target is `make export RUN_ID=run-... OUTPUT=exports/report.md
-FORMAT=markdown`. The HTTP API exposes JSON snapshots and events under
-`/api/runs/RUN_ID`, artifact reads under `/api/runs/RUN_ID/artifacts/REF`, and
-Markdown/JSON reports under `/api/runs/RUN_ID/report?format=markdown|json`.
+- **Offline**: local tests and the fixture workflow use no network and no model
+  provider.
+- **Recorded**: `fixtures/omnirush/reproducible-run.json` is explicitly labeled
+  `recorded/demo`; the hosted and `make demo` paths use it.
+- **Live**: a host runtime may provide an `OmniRushSessionClient` transport for
+  local integrations. The repository does not embed provider SDKs or API keys.
 
-## Optional GitHub reads
+The provenance label is persisted in the run/report so recorded evidence is not
+presented as a live model result.
 
-GitHub import is read-first and optional. Install and authenticate the GitHub
-CLI only when a user explicitly requests repository metadata, issue text, a
-pull-request diff, Actions status, or Actions logs:
+## Optional GitHub read mode
+
+GitHub access is optional and read-first. If a local operator explicitly needs
+repository metadata, issue text, a pull-request diff, Actions status, or Actions
+logs, authenticate the GitHub CLI outside ProofFix:
 
 ```sh
 gh auth login
 ```
 
-Missing `gh`, authentication, or network access is reported as a blocked read
-with next steps. GitHub tokens are never passed in command arguments or stored
-in ProofFix records. Branch creation, commits, PR creation, and other GitHub
-writes are approval-gated stretch functionality and are not needed for the
-offline demo.
+Missing CLI, authentication, or network access becomes a bounded blocked read.
+ProofFix never accepts GitHub credentials in hosted-demo intake, never places
+tokens in command arguments or run records, and exposes no default GitHub write
+operation. Branch, commit, PR, and other writes are outside this MVP.
+
+## Safety and privacy
+
+Repository paths must resolve beneath configured allowed roots. Commands run in
+disposable workspaces through the runner policy; shell syntax, eval forms,
+unapproved executables, unsafe targets, path traversal, oversized requests, and
+unsafe artifact references are rejected. Logs, environment metadata, GitHub
+references, and model text are redacted and bounded before persistence.
+
+The public demo accepts no credentials, does not accept arbitrary repositories,
+does not accept command overrides for its fixed run, and does not perform GitHub
+writes. Do not place secrets in `.env.example`, Render configuration, fixtures,
+or committed reports.
+
+## Testing and reproducibility
+
+The single supported offline test command is:
+
+```sh
+make test
+```
+
+Additional checks used for a clean submission are:
+
+```sh
+python -m compileall -q src tests
+node --check web/app.js
+git diff --check
+```
+
+The runtime and dependency inputs are pinned by `.python-version` and
+`requirements.lock`. No global Python package installation is required.
 
 ## Docker
 
-Build the reproducible image (the build installs Git and Make, then runs the
-same offline test command):
+The Dockerfile installs the system packages needed by the app, copies the
+repository, and runs `make test` during the image build:
 
 ```sh
 docker build -t proofix .
-```
-
-Run the local server from the image:
-
-```sh
 docker run --rm --env-file .env -p 127.0.0.1:8000:8000 proofix
 ```
 
-The container workflow is also localhost-only. Docker does not turn the MVP
-into a hosted or production deployment.
+The default container is loopback-only. Render supplies its `PORT` value; the
+CLI and Makefile retain `8000` as the local default. The image command uses
+`make run`, and Render's `PROOFIX_DEMO=true` environment selects the fixed demo
+path without changing local defaults.
 
-## Deployment limitations
+## Hosted deployment
 
-The MVP is intentionally a local development tool. It stores run data under
-the configured local data root, has no hosted control plane or multi-user
-authentication, and must not be exposed publicly. Production deployment,
-automatic merging, unattended GitHub writes, and PR creation without an
-explicit approval are outside the MVP scope. A clean-checkout demo is the
-supported deployment verification; the app has no hosted control plane.
+`render.yaml` defines one Docker web service named `proofix-demo`, uses the
+existing Dockerfile, checks `/health`, binds Render's injected `PORT`, and
+stores the demo data root at `.proofix-data`. It sets only public-demo flags and
+contains no GitHub credentials or secrets. Deploy it from the repository in
+Render's Blueprint flow; then use the generated service URL as
+`PUBLIC_DEMO_URL` in the hosted-demo instructions above.
+
+Hosted-demo limitations are intentional: the service has no user
+authentication, no multi-user control plane, no arbitrary repository intake,
+no credential intake, no GitHub writes, recorded rather than live OmniRush
+responses, and deployment-local data storage. Public access is suitable for a
+restricted judge walkthrough only; it is not a production ProofFix service.
+
+## Useful API examples
+
+Create and inspect a normal local run:
+
+```sh
+RUN_JSON=$(curl -fsS -X POST http://127.0.0.1:8000/api/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"repository_path":".","command":"false","failure_text":"expected failure"}')
+RUN_ID=$(printf '%s' "$RUN_JSON" | python -c 'import json,sys; print(json.load(sys.stdin)["run_id"])')
+curl -fsS "http://127.0.0.1:8000/api/runs/$RUN_ID"
+```
+
+The demo uses the fixed action instead:
+
+```sh
+curl -fsS http://127.0.0.1:8000/api/demo
+RUN_JSON=$(curl -fsS -X POST http://127.0.0.1:8000/api/demo/start \
+  -H 'Content-Type: application/json' -d '{}')
+```
+
+The normal lifecycle endpoints remain available for local runs:
+`/reproduce`, `/diagnose`, `/experiment`, `/propose`, `/approve`, `/verify`,
+`/return-to-diagnosis`, `/events`, `/report`, and `/export`.
+
+For a persisted report export, use:
+
+```sh
+PYTHONPATH=src python -m proofix.cli export RUN_ID exports/report.json \
+  --format json --data-root .proofix-data
+```
+
+For submission verification, use a clean checkout and repeat the hosted-demo
+flow without relying on local run data from an earlier session.

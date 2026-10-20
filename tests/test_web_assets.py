@@ -40,6 +40,7 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn('id="propose-button"', html)
         self.assertIn('id="regression-input"', html)
         self.assertIn('id="recovery-button"', html)
+        self.assertIn('id="demo-start-button"', html)
 
     def test_frontend_contract_has_safe_rendering_and_api_actions(self):
         js = (WEB / "app.js").read_text(encoding="utf-8")
@@ -47,6 +48,8 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn("textContent", js)
         self.assertNotIn("TERMINAL_STATES", js)
         for endpoint in (
+            "/api/demo",
+            "/api/demo/start",
             "/api/runs/",
             "/events",
             "/experiment",

@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: proofix-demo
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PROOFIX_DEMO
+        value: "true"
+      - key: PROOFIX_PUBLIC_DEMO
+        value: "true"
+      - key: PROOFIX_HOST
+        value: "0.0.0.0"
+      - key: PROOFIX_DATA_ROOT
+        value: .proofix-data
+      - key: PROOFIX_ALLOWED_ROOTS
+        value: .proofix-data

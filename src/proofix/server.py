@@ -1,4 +1,4 @@
-"""Bounded localhost HTTP API for the ProofFix orchestrator."""
+"""Bounded HTTP API for the ProofFix orchestrator."""
 
 from __future__ import annotations
 
@@ -57,11 +57,14 @@ class ServerConfig:
     session_client: OmniRushSessionClient | Any | None = None
     runner: Any = run_command
     demo: bool = False
+    public_demo: bool = False
 
     def normalized(self) -> "ServerConfig":
         root = Path(self.data_root).expanduser().resolve(strict=False)
-        if not _is_loopback(self.host):
-            raise ValueError("ProofFix server must bind to localhost")
+        demo = _enabled_flag(self.demo)
+        public_demo = _enabled_flag(self.public_demo)
+        if not _is_loopback(self.host) and not (demo and public_demo):
+            raise ValueError("non-loopback binding requires demo mode and the explicit public-demo flag")
         if not isinstance(self.port, int) or not 0 <= self.port <= 65535:
             raise ValueError("port must be between 0 and 65535")
         if self.max_body_bytes <= 0 or self.max_artifact_bytes <= 0:
@@ -75,9 +78,9 @@ class ServerConfig:
             roots = tuple(Path(value).expanduser().resolve(strict=False) for value in raw_roots)
         if not roots:
             raise ValueError("at least one allowed repository root is required")
-        if self.demo and root not in roots:
+        if demo and root not in roots:
             roots = (*roots, root)
-        if self.repository is not None and not self.demo:
+        if self.repository is not None and not demo:
             resolve_repository(self.repository, roots)
         return ServerConfig(
             data_root=root,
@@ -85,12 +88,13 @@ class ServerConfig:
             port=self.port,
             max_body_bytes=self.max_body_bytes,
             max_artifact_bytes=self.max_artifact_bytes,
-            repository=_default_fixture_repository() if self.demo else self.repository,
+            repository=_default_fixture_repository() if demo else self.repository,
             allowed_roots=roots,
-            recorded_fixture=_default_recorded_fixture() if self.demo else self.recorded_fixture,
-            session_client=None if self.demo else self.session_client,
+            recorded_fixture=_default_recorded_fixture() if demo else self.recorded_fixture,
+            session_client=None if demo else self.session_client,
             runner=self.runner,
-            demo=self.demo,
+            demo=demo,
+            public_demo=public_demo,
         )
 
 
@@ -222,6 +226,16 @@ def _make_handler():
         def _get(self, route: list[str], query: Mapping[str, list[str]]):
             if not route or route == ["health"]:
                 return 200, "application/json; charset=utf-8", {"ok": True, "service": "proofix"}
+            if route == ["demo"]:
+                return 200, "application/json; charset=utf-8", {
+                    "enabled": self.server.config.demo,
+                    "public_demo": self.server.config.public_demo,
+                    "mode": "recorded/demo" if self.server.config.demo else "local",
+                    "fixture": "checked-in/broken-parser-repo" if self.server.config.demo else None,
+                    "omnirush": "recorded" if self.server.config.demo else "configured at runtime",
+                    "repository_intake": "fixed fixture only" if self.server.config.demo else "allowed roots",
+                    "commands": "existing guarded experiment vocabulary",
+                }
             if route[0] != "runs" or len(route) < 2:
                 raise _HTTPError(404, "not found")
             run_id = route[1]
@@ -282,18 +296,15 @@ def _make_handler():
             return 200, _artifact_content_type(selected), body
 
         def _post(self, route: list[str], payload: Any):
+            if route == ["demo", "start"]:
+                if not self.server.config.demo:
+                    raise _HTTPError(404, "public demo is not enabled")
+                _reject_demo_overrides(payload)
+                return self._start_demo_run()
             if route == ["runs"] or route == ["intake"]:
                 if self.server.config.demo:
-                    data = {
-                        "repository_path": str(self.server.demo_repository or _default_fixture_repository()),
-                        "command": "python -m unittest discover -s tests -v",
-                        "failure_text": "ValueError: too many values to unpack (expected 2)",
-                        "constraints": [],
-                        "issue_url": None,
-                        "pr_url": None,
-                        "commit_sha": None,
-                        "branch": None,
-                    }
+                    _reject_demo_overrides(payload)
+                    return self._start_demo_run()
                 else:
                     data = dict(payload)
                 run_id = self.server.orchestrator.start_run(sanitize_intake(data, self.server.config.allowed_roots))
@@ -337,6 +348,11 @@ def _make_handler():
             else:
                 raise _HTTPError(404, "unknown run action")
             return 200, "application/json; charset=utf-8", result.to_dict()
+
+        def _start_demo_run(self):
+            data = _demo_intake(self.server.demo_repository or _default_fixture_repository())
+            run_id = self.server.orchestrator.start_run(sanitize_intake(data, self.server.config.allowed_roots))
+            return 201, "application/json; charset=utf-8", self.server.store.get_run(run_id).to_dict()
 
         def _export(self, run_id: str, payload: Mapping[str, Any]):
             run = self.server.store.get_run(run_id)
@@ -430,6 +446,32 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
+def _enabled_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _demo_intake(repository: Path) -> dict[str, Any]:
+    return {
+        "repository_path": str(repository),
+        "command": "python -m unittest discover -s tests -v",
+        "failure_text": "ValueError: too many values to unpack (expected 2)",
+        "constraints": [],
+        "issue_url": None,
+        "pr_url": None,
+        "commit_sha": None,
+        "branch": None,
+    }
+
+
+def _reject_demo_overrides(payload: Mapping[str, Any]) -> None:
+    if payload:
+        raise _HTTPError(400, "public demo uses a fixed checked-in fixture; repository and command overrides are not accepted")
+
+
 def _safe_error(value: Any) -> str:
     message = redact_text(str(value).replace("\x00", ""))[0]
     return message[:512]
@@ -503,14 +545,11 @@ def _materialize_demo_fixture(data_root: Path) -> Path:
     """Create an isolated, committed demo repository inside controlled run data."""
     source = _default_fixture_repository()
     destination = ensure_contained(data_root / "demo-fixture", data_root)
-    try:
-        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=destination, text=True, stderr=subprocess.PIPE).strip()
-        if head:
-            return destination
-    except (OSError, subprocess.CalledProcessError):
-        pass
     if destination.exists():
-        shutil.rmtree(destination)
+        if destination.is_dir() and not destination.is_symlink():
+            shutil.rmtree(destination)
+        else:
+            destination.unlink()
     shutil.copytree(source, destination, ignore=shutil.ignore_patterns(".git", ".proofix-artifacts", "__pycache__"))
     subprocess.run(["git", "init", "-q"], cwd=destination, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     subprocess.run(["git", "config", "user.email", "proofix-demo@example.test"], cwd=destination, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

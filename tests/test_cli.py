@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,6 +26,24 @@ class CLITests(unittest.TestCase):
             self.assertEqual(factory.call_count, 2)
             self.assertEqual(captured, ["served", "closed", "served", "closed"])
             self.assertTrue(factory.call_args_list[1].args[0].demo)
+
+    def test_render_port_and_public_demo_environment_are_wired(self):
+        with tempfile.TemporaryDirectory() as directory:
+            captured = []
+
+            class FakeServer:
+                def serve_forever(self):
+                    return None
+
+                def server_close(self):
+                    return None
+
+            with patch.dict(os.environ, {"PORT": "9123", "PROOFIX_DEMO": "true", "PROOFIX_PUBLIC_DEMO": "true"}, clear=False), patch.object(cli, "create_server", return_value=FakeServer()) as factory:
+                self.assertEqual(cli.main(["run", "--data-root", directory, "--host", "0.0.0.0"]), 0)
+            config = factory.call_args.args[0]
+            self.assertEqual(config.port, 9123)
+            self.assertTrue(config.demo)
+            self.assertTrue(config.public_demo)
 
     def test_export_delegates_to_report_layer(self):
         with tempfile.TemporaryDirectory() as directory:

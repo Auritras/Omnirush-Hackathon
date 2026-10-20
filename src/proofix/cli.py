@@ -38,7 +38,8 @@ def main(argv=None) -> int:
         data_root=Path(args.data_root),
         host=args.host,
         port=args.port,
-        demo=args.command == "demo",
+        demo=args.command == "demo" or _env_flag("PROOFIX_DEMO"),
+        public_demo=args.public_demo or _env_flag("PROOFIX_PUBLIC_DEMO"),
         repository=Path(args.repository) if args.repository else None,
         recorded_fixture=Path(args.recorded_fixture) if args.recorded_fixture else None,
         allowed_roots=_allowed_roots(args),
@@ -74,11 +75,16 @@ def _parser() -> argparse.ArgumentParser:
 
 def _server_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--host", default=os.environ.get("PROOFIX_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.environ.get("PROOFIX_PORT", "8000")))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", os.environ.get("PROOFIX_PORT", "8000"))))
     parser.add_argument("--data-root", default=os.environ.get("PROOFIX_DATA_ROOT", ".proofix-data"))
     parser.add_argument("--repository")
     parser.add_argument("--recorded-fixture")
     parser.add_argument("--allowed-root", action="append", dest="allowed_root")
+    parser.add_argument("--public-demo", action="store_true", help="allow a demo server to bind beyond loopback")
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def _allowed_roots(args):
