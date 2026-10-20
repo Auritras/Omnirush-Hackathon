@@ -80,6 +80,54 @@ run workflow. The equivalent CLI commands run directly from the checkout with
 This is a localhost-only server in normal mode; it is intentionally not an
 internet-facing deployment.
 
+### Windows PowerShell without GNU Make
+
+GNU Make is convenient on Linux and macOS, but it is not included with a
+standard Windows PowerShell installation. Run the same full local server
+directly with Python instead:
+
+```powershell
+cd C:\Users\Administrator\omnirush.ai\proofix
+$env:PYTHONPATH = "src"
+python -m proofix.cli run `
+  --host 127.0.0.1 `
+  --port 8000 `
+  --data-root .proofix-data `
+  --allowed-root "C:\Users\Administrator\omnirush.ai"
+```
+
+If `python` is not on PATH, use the Windows Python launcher:
+
+```powershell
+$env:PYTHONPATH = "src"
+py -3.12 -m proofix.cli run `
+  --host 127.0.0.1 `
+  --port 8000 `
+  --data-root .proofix-data `
+  --allowed-root "C:\Users\Administrator\omnirush.ai"
+```
+
+Open `http://127.0.0.1:8000/` after the server prints its listening address.
+The `--allowed-root` value should be a parent directory containing the local
+repositories you want ProofFix to inspect. To create a run against one of
+those repositories, open a second PowerShell window and use the API:
+
+```powershell
+$body = @{
+  repository_path = "C:\Users\Administrator\omnirush.ai\your-repo"
+  command = "python -m unittest discover -s tests -v"
+  failure_text = "paste the expected failure text here"
+} | ConvertTo-Json
+
+$run = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/runs" `
+  -ContentType "application/json" `
+  -Body $body
+
+Start-Process "http://127.0.0.1:8000/?run=$($run.run_id)"
+```
+
 The offline fixture demo is also loopback-only by default:
 
 ```sh
