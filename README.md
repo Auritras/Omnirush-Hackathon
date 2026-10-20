@@ -46,6 +46,20 @@ rejects repository and command intake overrides, and accepts no GitHub
 credentials. Experiments still pass through the existing guarded vocabulary;
 the service is not a general remote shell.
 
+## Get the source
+
+The simplest setup is to clone the repository with Git:
+
+```sh
+git clone https://github.com/Auritras/Omnirush-Hackathon.git proofix
+cd proofix
+```
+
+You can also use GitHub's **Code → Download ZIP** option and extract the
+archive. A Git checkout is recommended for the full local workflow because
+ProofFix creates disposable Git worktree snapshots, and every target
+repository supplied to local mode must itself be a Git repository.
+
 ## Full local mode
 
 ### Requirements and setup
