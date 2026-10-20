@@ -362,7 +362,10 @@ def _resolve_executable(executable: str, name: str, workspace: Path, root: Path)
         if not candidate.is_file() or not os.access(candidate, os.X_OK):
             return None
         return str(candidate)
-    return shutil.which(name, path=os.defpath)
+    # Use the configured runtime PATH. Official Python images install the
+    # interpreter under /usr/local/bin, which is intentionally present in the
+    # container PATH but not in os.defpath.
+    return shutil.which(name, path=os.environ.get("PATH") or os.defpath)
 
 
 def _validate_argument_paths(arguments: Sequence[str], workspace: Path, root: Path) -> None:

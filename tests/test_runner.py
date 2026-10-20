@@ -65,6 +65,28 @@ class RunnerTests(unittest.TestCase):
             self.assertFalse(result.blocked, result.blocked_reason)
             self.assertEqual(result.exit_code, 0)
 
+    def test_executable_resolution_uses_runtime_path_not_only_os_defpath(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            fake_bin = workspace / "runtime-bin"
+            fake_bin.mkdir()
+            executable = fake_bin / "proofix-runtime"
+            executable.write_text("#!/bin/sh\nprintf runtime-path\n", encoding="utf-8")
+            executable.chmod(0o755)
+            original_path = os.environ.get("PATH", "")
+            try:
+                os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+                result = run_command(
+                    ["proofix-runtime"],
+                    workspace,
+                    policy=CommandPolicy(allowed_commands={"proofix-runtime"}),
+                )
+            finally:
+                os.environ["PATH"] = original_path
+            self.assertFalse(result.blocked, result.blocked_reason)
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.stdout.strip(), "runtime-path")
+
     def test_allowlisted_command_runs_in_the_workspace(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
