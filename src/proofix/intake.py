@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import re
 from pathlib import Path
 from typing import Any, Mapping
@@ -133,8 +134,8 @@ def _repository_path(value: Any) -> str:
         value = str(value)
     if not isinstance(value, str) or not value or "\x00" in value or len(value) > MAX_INLINE_FIELD:
         raise ValueError("repository_path is required and bounded")
-    if _WINDOWS_ABSOLUTE.match(value):
-        raise ValueError("repository_path must not be a Windows absolute path")
+    if _WINDOWS_ABSOLUTE.match(value) and os.name != "nt":
+        raise ValueError("repository_path must use the local host path format")
     normalized = value.replace("\\", "/")
     parts = Path(normalized).parts
     if ".." in parts:

@@ -1,6 +1,7 @@
 import unittest
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from proofix.intake import IntakeRequest, sanitize_intake
 
@@ -62,6 +63,23 @@ class IntakeTests(unittest.TestCase):
             sanitize_intake({"repository_path": REPOSITORY_PATH, "command": "false", "failure_text": "failed", "commit_sha": "not-a-sha"})
         with self.assertRaises(ValueError):
             sanitize_intake({"repository_path": REPOSITORY_PATH, "command": "false", "failure_text": "failed", "constraints": ["x" * 4097]})
+
+    def test_windows_absolute_repository_path_is_allowed_on_windows(self):
+        class PortablePath:
+            parts = ("C:", "work", "repo")
+
+            def __init__(self, value):
+                self.value = value
+
+            def expanduser(self):
+                return self
+
+            def __str__(self):
+                return self.value.replace("\\", "/")
+
+        with patch("proofix.intake.os.name", "nt"), patch("proofix.intake.Path", PortablePath):
+            request = IntakeRequest(r"C:\work\repo", "false", "failed")
+        self.assertIn("repo", request.repository_path)
 
     def test_required_fields_are_present_and_serializable(self):
         request = sanitize_intake({"repository_path": REPOSITORY_PATH, "command": "false", "failure_text": "failed"})
