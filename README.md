@@ -64,9 +64,11 @@ repository supplied to local mode must itself be a Git repository.
 
 ### Requirements and setup
 
-- Python 3.12 (pinned by `.python-version`)
-- GNU Make
-- Git, for disposable worktree snapshots
+- Python 3.12 for ProofFix (pinned by `.python-version`); install the runtime
+  required by each target repository too
+- GNU Make on Linux/macOS; Windows PowerShell can use the direct Python
+  commands below
+- Git, for disposable worktree snapshots and target-repository commits
 - Docker, only for the container workflow
 
 The project has no third-party Python dependencies. `requirements.lock` records
@@ -101,13 +103,13 @@ standard Windows PowerShell installation. Run the same full local server
 directly with Python instead:
 
 ```powershell
-cd C:\Users\Administrator\omnirush.ai\proofix
+cd C:\path\to\proofix
 $env:PYTHONPATH = "src"
 python -m proofix.cli run `
   --host 127.0.0.1 `
   --port 8000 `
   --data-root .proofix-data `
-  --allowed-root "C:\Users\Administrator\omnirush.ai"
+  --allowed-root "C:\path\to\repositories"
 ```
 
 If `python` is not on PATH, use the Windows Python launcher:
@@ -118,19 +120,20 @@ py -3.12 -m proofix.cli run `
   --host 127.0.0.1 `
   --port 8000 `
   --data-root .proofix-data `
-  --allowed-root "C:\Users\Administrator\omnirush.ai"
+  --allowed-root "C:\path\to\repositories"
 ```
 
 Open `http://127.0.0.1:8000/` after the server prints its listening address.
-The `--allowed-root` value should be a parent directory containing the local
+Replace the example paths with real paths on your computer. The
+`--allowed-root` value must be a parent directory containing the local
 repositories you want ProofFix to inspect. To create a run against one of
 those repositories, open a second PowerShell window and use the API:
 
 ```powershell
 $body = @{
-  repository_path = "C:\Users\Administrator\omnirush.ai\your-repo"
+  repository_path = "C:\path\to\repositories\your-repo"
   command = "python -m unittest discover -s tests -v"
-  failure_text = "paste the expected failure text here"
+  failure_text = "AssertionError: expected value differs"
 } | ConvertTo-Json
 
 $run = Invoke-RestMethod `
@@ -142,10 +145,78 @@ $run = Invoke-RestMethod `
 Start-Process "http://127.0.0.1:8000/?run=$($run.run_id)"
 ```
 
+### Use your own broken repository
+
+Normal local mode is not limited to the checked-in fixture. Before creating a
+run, prepare the target repository:
+
+1. Make sure it is a Git repository and that the broken state is committed.
+   ProofFix's default clean snapshot runs the committed `HEAD`, not arbitrary
+   uncommitted edits.
+2. Make sure the repository is below the `--allowed-root` passed to the server.
+3. Confirm the failure locally with the same command you will submit.
+4. Submit a concise, stable failure signature. A one-line signature such as
+   `AssertionError: 4 != 5` is more portable than copying a complete
+   OS-specific traceback.
+
+For example, on Windows:
+
+```powershell
+$repo = "C:\path\to\repositories\my-broken-app"
+Set-Location $repo
+
+git init                 # only if this is not already a Git repository
+git add .
+git commit -m "Record broken baseline"
+
+python -m unittest discover -s tests -v
+```
+
+Then create the run from a second PowerShell window:
+
+```powershell
+$body = @{
+  repository_path = "C:\path\to\repositories\my-broken-app"
+  command = "python -m unittest discover -s tests -v"
+  failure_text = "AssertionError: 4 != 5"
+} | ConvertTo-Json -Depth 5
+
+$run = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/runs" `
+  -ContentType "application/json" `
+  -Body $body
+
+$runId = [string]$run.run_id
+Start-Process "http://127.0.0.1:8000/?run=$runId"
+```
+
+The dashboard then gates the workflow in order: reproduce the failure, run
+diagnosis and evidence checks, review a unified diff, approve it with an actor,
+verify it in a fresh workspace, and export the Markdown or JSON report. The
+source repository is not modified by reproduction or verification.
+
+Commands must use the guarded command vocabulary and begin with an allowlisted
+executable such as `python`, `pytest`, `node`, `npm`, `go`, `cargo`, `dotnet`,
+or another configured tool. Shell pipelines, redirection, shell/eval forms,
+unsafe paths, and arbitrary unapproved executables are rejected.
+
 The offline fixture demo is also loopback-only by default:
 
 ```sh
 make demo
+```
+
+On Windows without GNU Make, run the equivalent demo command from the ProofFix
+checkout:
+
+```powershell
+$env:PYTHONPATH = "src"
+py -3.12 -m proofix.cli demo `
+  --host 127.0.0.1 `
+  --port 8000 `
+  --data-root .proofix-data `
+  --allowed-root ".proofix-data"
 ```
 
 It uses the checked-in fixture and recorded OmniRush responses. The server
@@ -198,7 +269,11 @@ public-demo configuration.
   local integrations. The repository does not embed provider SDKs or API keys.
 
 The provenance label is persisted in the run/report so recorded evidence is not
-presented as a live model result.
+presented as a live model result. The standard offline checkout does not include
+a live session client or provider credentials: it can reproduce local failures,
+but live diagnosis and model-backed patch proposals require the host runtime to
+inject that transport. The fixed demo remains available without that setup
+because it uses the explicitly recorded specialist response.
 
 ## Optional GitHub read mode
 
@@ -234,6 +309,13 @@ The single supported offline test command is:
 
 ```sh
 make test
+```
+
+On Windows without GNU Make, run the same test suite directly:
+
+```powershell
+$env:PYTHONPATH = "src"
+py -3.12 -m unittest discover -s tests -v
 ```
 
 Additional checks used for a clean submission are:
