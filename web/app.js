@@ -46,7 +46,9 @@
     "         raise ParseError(\"missing key\")",
     "     return key.strip(), value.strip()",
   ].join("\n") + "\n";
+  let demoEnabled = false;
   let hostedDemo = false;
+  let demoStartInFlight = false;
 
   function latestHypothesis(run) {
     const hypotheses = listValue(run && run.hypotheses);
@@ -117,17 +119,16 @@
   }
 
   async function loadDemoStatus() {
-    const buttons = [$("demo-start-button"), $("masthead-demo-button")].filter(Boolean);
-    if (!buttons.length) return;
+    const button = $("masthead-demo-button");
+    if (!button) return;
     try {
       const status = await api("/api/demo");
       const hosted = Boolean(status.enabled && status.public_demo);
+      demoEnabled = Boolean(status.enabled);
       hostedDemo = hosted;
-      buttons.forEach((button) => {
-        button.disabled = !status.enabled;
-        if (button.id === "demo-start-button") button.textContent = status.enabled ? "Start demo run" : "Demo unavailable";
-        button.title = status.enabled ? "Create the fixed recorded demo run" : "This server is running in local mode";
-      });
+      button.disabled = !demoEnabled || demoStartInFlight;
+      button.textContent = demoStartInFlight ? "Starting demo…" : status.enabled && (currentRun || runIdFromUrl()) ? "Start a new demo" : status.enabled ? "Start the fixed demo" : "Demo unavailable";
+      button.title = status.enabled ? "Create the fixed recorded demo run" : "This server is running in local mode";
       setText("surface-label", hosted ? "EVIDENCE CHAIN / HOSTED DEMO" : status.enabled ? "EVIDENCE CHAIN / LOCAL DEMO" : "EVIDENCE CHAIN / LOCAL MODE");
       setText("mode-badge", hosted ? "HOSTED DEMO · RECORDED EVIDENCE" : status.enabled ? "LOCAL DEMO · RECORDED EVIDENCE" : "LOCAL MODE");
       $("mode-badge").className = `badge ${status.enabled ? "badge-recorded" : "badge-neutral"}`;
@@ -137,11 +138,10 @@
         renderPatch(currentRun);
       }
     } catch (_) {
+      demoEnabled = false;
       hostedDemo = false;
-      buttons.forEach((button) => {
-        button.disabled = true;
-        if (button.id === "demo-start-button") button.textContent = "Demo unavailable";
-      });
+      button.disabled = true;
+      button.textContent = "Demo unavailable";
       setText("surface-label", "EVIDENCE CHAIN / LOCAL MODE");
       setText("mode-badge", "LOCAL MODE");
       $("mode-badge").className = "badge badge-neutral";
@@ -149,9 +149,11 @@
   }
 
   async function startDemoRun() {
-    const button = $("demo-start-button");
-    if (!button) return;
+    const button = $("masthead-demo-button");
+    if (!button || demoStartInFlight || !demoEnabled) return;
+    demoStartInFlight = true;
     button.disabled = true;
+    button.textContent = "Starting demo…";
     try {
       const run = await api("/api/demo/start", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: "{}" });
       const url = new URL(window.location.href);
@@ -161,6 +163,8 @@
       announce(`Fixed demo run ${run.run_id} started.`);
     } catch (error) {
       announce(`Demo run could not start: ${error.message}`);
+    } finally {
+      demoStartInFlight = false;
       await loadDemoStatus();
     }
   }
@@ -240,8 +244,8 @@
     const state = run && run.run_id ? text(run.state, "created") : "created";
     const hasRun = Boolean(run && run.run_id);
     const showDiagnosis = hasRun && !["created", "triaging", "reproducing"].includes(state);
-    const showExperiment = showDiagnosis && !["not_reproduced", "blocked"].includes(state);
-    const showPatch = showExperiment && !["not_reproduced", "blocked"].includes(state);
+    const showExperiment = showDiagnosis && !["reproduced", "not_reproduced", "blocked"].includes(state);
+    const showPatch = showExperiment;
     const showVerification = hasRun && ["applying", "verifying", "verification_failed", "verification_blocked", "verified"].includes(state);
     const visibility = {
       "panel-hypotheses": showDiagnosis,
@@ -677,7 +681,6 @@
   if ($("verify-button")) $("verify-button").addEventListener("click", verifyPatch);
   if ($("reproduce-button")) $("reproduce-button").addEventListener("click", () => advanceStage("reproduce"));
   if ($("diagnose-button")) $("diagnose-button").addEventListener("click", () => advanceStage("diagnose"));
-  if ($("demo-start-button")) $("demo-start-button").addEventListener("click", startDemoRun);
   if ($("masthead-demo-button")) $("masthead-demo-button").addEventListener("click", startDemoRun);
   ["experiment-kind", "experiment-command", "experiment-regression"].forEach((id) => {
     if ($(id)) $(id).addEventListener("input", () => renderExperimentPanel(currentRun));

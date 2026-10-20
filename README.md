@@ -32,7 +32,7 @@ workflow state in the browser.
 ## Two-minute hosted demo
 
 1. Open the hosted demo link above.
-2. Click **Start demo run**. No run ID or repository path is required.
+2. Click **Start the fixed demo** in the current-state panel. No run ID or repository path is required.
 3. Review the fixed fixture's recorded reproduction and OmniRush diagnosis.
 4. Advance the visible guarded stages as desired. The dashboard enables only
    actions allowed by the server snapshot.
