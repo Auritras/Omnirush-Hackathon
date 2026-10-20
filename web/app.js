@@ -10,6 +10,23 @@
     ["patch", "Fix review"],
     ["verification", "Verify"]
   ];
+  const STATE_TASKS = {
+    created: { step: "Triage", title: "Review the reported issue", action: "Review the reported issue before starting the server-authorized workflow." },
+    triaging: { step: "Triage", title: "Triage the report", action: "Confirm the intake details before the server advances to reproduction." },
+    reproducing: { step: "Reproduce", title: "Run the reproduction", action: "Run the recorded reproduction command and capture bounded output." },
+    reproduced: { step: "Diagnose", title: "Prepare the diagnosis", action: "Review the reproduced failure and run diagnosis when it is available." },
+    diagnosing: { step: "Diagnose", title: "Diagnose the failure", action: "Compare the evidence and record the leading hypothesis." },
+    experimenting: { step: "Evidence check", title: "Run the evidence check", action: "Run the approved focused check and record its result." },
+    patch_proposed: { step: "Fix review", title: "Review the proposed fix", action: "Review the recorded diff and wait for the approval decision." },
+    awaiting_approval: { step: "Fix review", title: "Review the proposed fix", action: "Review the exact diff digest, then record the approval decision." },
+    applying: { step: "Fix review", title: "Apply the approved fix", action: "Confirm the approved patch is ready, then run verification." },
+    verifying: { step: "Verify", title: "Verify the patch", action: "Run the recorded verification checks and confirm the outcome." },
+    blocked: { step: "Blocked", title: "Resolve the blocked run", action: "Review the recorded block before continuing the workflow." },
+    not_reproduced: { step: "Not reproduced", title: "Review the failed reproduction", action: "Review the reproduction evidence; this run does not support a fix claim." },
+    verification_failed: { step: "Verification failed", title: "Review failed verification", action: "Review the failed checks and return to diagnosis if the server allows it." },
+    verification_blocked: { step: "Verification blocked", title: "Resolve verification", action: "Review the verification block before making a claim about the patch." },
+    verified: { step: "Verified", title: "Review the verified run", action: "Review or export the recorded evidence report." }
+  };
   const TERMINAL_COPY = {
     not_reproduced: "The reported failure was not reproduced. This run does not support a fix claim.",
     blocked: "The workflow is blocked. The cause and outcome are not verified.",
@@ -283,9 +300,10 @@
   }
 
   function renderStages(state) {
-    const activeStages = { triaging: "Triage", reproducing: "Reproduce", diagnosing: "Diagnose", experimenting: "Evidence check", patch_proposed: "Fix review", awaiting_approval: "Fix review", applying: "Fix review", verifying: "Verify" };
-    const terminalStages = { blocked: "Blocked", not_reproduced: "Not reproduced", verification_failed: "Verification failed", verification_blocked: "Verification blocked", verified: "Verified" };
-    setText("current-step", `Current step: ${activeStages[state] || terminalStages[state] || "Triage"}`);
+    const task = STATE_TASKS[state] || STATE_TASKS.created;
+    setText("current-step", `Current step: ${task.step}`);
+    setText("current-task-title", task.title);
+    setText("current-task-action", task.action);
     STAGES.forEach(([key]) => {
       const item = document.querySelector(`[data-stage="${key}"]`);
       if (!item) return;

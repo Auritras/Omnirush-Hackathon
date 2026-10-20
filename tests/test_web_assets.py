@@ -69,6 +69,15 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertNotIn('Evidence chain / demo', html)
         self.assertNotIn('Operate / proof chain', html)
         self.assertEqual(html.count('id="current-step"'), 1)
+        self.assertEqual(html.count('id="current-task"'), 1)
+        self.assertEqual(html.count('id="current-task-label"'), 1)
+        self.assertEqual(html.count('id="current-task-title"'), 1)
+        self.assertEqual(html.count('id="current-task-action"'), 1)
+        self.assertIn('>Current task<', html)
+        self.assertNotIn('class="current-task status-pill', html)
+        topbar_actions = html[html.index('class="topbar-actions"'):html.index('</div>', html.index('class="topbar-actions"'))]
+        self.assertLess(topbar_actions.index('id="refresh-button"'), topbar_actions.index('id="export-markdown"'))
+        self.assertLess(topbar_actions.index('id="export-markdown"'), topbar_actions.index('id="export-json"'))
         for section in ("run-strip", "stage-rail", "evidence-drawer"):
             self.assertRegex(html, rf'class="{section}"')
             self.assertNotRegex(html, rf'class="{section} panel"')
@@ -86,6 +95,9 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn('classList.toggle("run-active"', js)
         self.assertIn('data-run-active', js)
         self.assertIn('setText("current-step"', js)
+        self.assertIn("const STATE_TASKS =", js)
+        self.assertIn('setText("current-task-title"', js)
+        self.assertIn('setText("current-task-action"', js)
         for phrase in (
             "The immutable intake",
             "Server-owned sequence",
@@ -187,6 +199,10 @@ class WebAssetContractTests(unittest.TestCase):
             self.assertIn(stage_class, css)
         self.assertNotIn(".is-active", css)
         self.assertIn("main.run-active h1 br { display: none; }", css)
+        self.assertIn("main.run-active h1 { text-wrap: balance;", css)
+        self.assertIn("main.run-active h1 br { display: none; }", css)
+        self.assertIn(".current-task", css)
+        self.assertIn("word-break: normal", css)
 
     def test_css_bundles_local_plex_faces_and_keeps_label_case_intentional(self):
         css = (WEB / "styles.css").read_text(encoding="utf-8")
