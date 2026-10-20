@@ -7,6 +7,7 @@ import hashlib
 import math
 import os
 from pathlib import Path
+import queue
 import re
 import shlex
 import shutil
@@ -14,6 +15,7 @@ import signal
 import selectors
 import stat
 import subprocess
+import threading
 import time
 from typing import Mapping, Sequence
 
@@ -508,6 +510,15 @@ def _capture_process(
     process: subprocess.Popen[bytes], *, timeout_seconds: float, max_output_bytes: int
 ) -> tuple[bytes, bytes, bool, bool, bool]:
     """Drain both pipes without retaining more than the explicit per-stream cap."""
+    if os.name == "nt":
+        return _capture_process_windows(process, timeout_seconds=timeout_seconds, max_output_bytes=max_output_bytes)
+    return _capture_process_selectors(process, timeout_seconds=timeout_seconds, max_output_bytes=max_output_bytes)
+
+
+def _capture_process_selectors(
+    process: subprocess.Popen[bytes], *, timeout_seconds: float, max_output_bytes: int
+) -> tuple[bytes, bytes, bool, bool, bool]:
+    """Drain POSIX pipes with a selector."""
     selector = selectors.DefaultSelector()
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     truncated = {"stdout": False, "stderr": False}
@@ -571,6 +582,79 @@ def _capture_process(
         for stream in (process.stdout, process.stderr):
             if stream is not None and not stream.closed:
                 stream.close()
+    return bytes(buffers["stdout"]), bytes(buffers["stderr"]), truncated["stdout"], truncated["stderr"], timed_out
+
+
+def _capture_process_windows(
+    process: subprocess.Popen[bytes], *, timeout_seconds: float, max_output_bytes: int
+) -> tuple[bytes, bytes, bool, bool, bool]:
+    """Drain Windows subprocess pipes without treating them as sockets.
+
+    The default Windows selector cannot poll anonymous ``subprocess.PIPE``
+    handles. Dedicated reader threads keep both streams drained while the
+    queue remains bounded, preserving the same output and timeout limits as
+    the selector implementation.
+    """
+    events: queue.Queue[tuple[str, bytes | None]] = queue.Queue(maxsize=8)
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    truncated = {"stdout": False, "stderr": False}
+    closed: set[str] = set()
+
+    def read_stream(name: str, stream) -> None:
+        try:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    break
+                events.put((name, chunk))
+        finally:
+            events.put((name, None))
+
+    threads = []
+    for stream, name in ((process.stdout, "stdout"), (process.stderr, "stderr")):
+        if stream is None:
+            closed.add(name)
+            continue
+        thread = threading.Thread(target=read_stream, args=(name, stream), daemon=True)
+        thread.start()
+        threads.append(thread)
+
+    deadline = time.monotonic() + max(timeout_seconds, 0.5)
+    timed_out = False
+    termination_deadline: float | None = None
+    try:
+        while True:
+            now = time.monotonic()
+            if not timed_out and now >= deadline:
+                timed_out = True
+                _terminate_process_group(process)
+                termination_deadline = time.monotonic() + 0.5
+            if timed_out and termination_deadline is not None and now >= termination_deadline:
+                _reap_process_bounded(process)
+                break
+            if process.poll() is not None and len(closed) == 2 and events.empty():
+                break
+            wait_for = 0.05 if timed_out else max(0.0, min(0.05, deadline - now))
+            try:
+                name, chunk = events.get(timeout=wait_for)
+            except queue.Empty:
+                continue
+            if chunk is None:
+                closed.add(name)
+                continue
+            remaining = max_output_bytes - len(buffers[name])
+            if remaining > 0:
+                buffers[name].extend(chunk[:remaining])
+            if len(chunk) > max(0, remaining):
+                truncated[name] = True
+        if process.poll() is None:
+            _reap_process_bounded(process)
+    finally:
+        for stream in (process.stdout, process.stderr):
+            if stream is not None and not stream.closed:
+                stream.close()
+        for thread in threads:
+            thread.join(timeout=0.1)
     return bytes(buffers["stdout"]), bytes(buffers["stderr"]), truncated["stdout"], truncated["stderr"], timed_out
 
 

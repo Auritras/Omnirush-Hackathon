@@ -9,7 +9,7 @@ import sys
 import time
 import unittest
 
-from proofix.runner import CommandPolicy, run_command
+from proofix.runner import CommandPolicy, _capture_process_windows, run_command
 
 
 def _script(workspace: Path, name: str, source: str) -> str:
@@ -44,6 +44,23 @@ def _assert_pid_gone(test_case: unittest.TestCase, pid_file: Path) -> None:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_windows_pipe_capture_drains_subprocess_output_without_selectors(self):
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import sys; print('stdout'); print('stderr', file=sys.stderr)"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout, stderr, stdout_truncated, stderr_truncated, timed_out = _capture_process_windows(
+            process,
+            timeout_seconds=5,
+            max_output_bytes=1024,
+        )
+        self.assertEqual(stdout.strip(), b"stdout")
+        self.assertEqual(stderr.strip(), b"stderr")
+        self.assertFalse(stdout_truncated)
+        self.assertFalse(stderr_truncated)
+        self.assertFalse(timed_out)
+
     def test_timeout_policy_rejects_invalid_values_and_accepts_boundaries(self):
         for value in (True, float("nan"), float("inf"), 0, -1, 301):
             with self.subTest(value=value):
