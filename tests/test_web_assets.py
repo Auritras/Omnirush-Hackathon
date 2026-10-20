@@ -41,8 +41,12 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn('id="regression-input"', html)
         self.assertIn('id="recovery-button"', html)
         self.assertIn('id="demo-start-button"', html)
+        self.assertIn('id="masthead-demo-button"', html)
+        self.assertIn('id="mode-badge"', html)
+        self.assertIn('id="surface-label"', html)
 
     def test_frontend_contract_has_safe_rendering_and_api_actions(self):
+        html = (WEB / "index.html").read_text(encoding="utf-8")
         js = (WEB / "app.js").read_text(encoding="utf-8")
         self.assertNotIn("innerHTML", js)
         self.assertIn("textContent", js)
@@ -71,6 +75,8 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn("renderExperiment", js)
         self.assertIn("collectClaims", js)
         self.assertIn("renderClaimsList", js)
+        self.assertIn("updatePanelVisibility", js)
+        self.assertIn("Start the fixed demo", html)
         self.assertIn("runExperiment", js)
         self.assertIn("proposePatch", js)
         self.assertIn("regression_test", js)
@@ -84,6 +90,7 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn("prefers-reduced-motion", css)
         self.assertIn(":focus-visible", css)
         self.assertIn("overflow", css)
+        self.assertIn("overflow-x: hidden", css)
         for stage_class in ("stage-active", "stage-complete", "stage-blocked", "stage-failed"):
             self.assertIn(stage_class, css)
         self.assertNotIn(".is-active", css)

@@ -70,16 +70,27 @@
   }
 
   async function loadDemoStatus() {
-    const button = $("demo-start-button");
-    if (!button) return;
+    const buttons = [$("demo-start-button"), $("masthead-demo-button")].filter(Boolean);
+    if (!buttons.length) return;
     try {
       const status = await api("/api/demo");
-      button.disabled = !status.enabled;
-      button.textContent = status.enabled ? "Start demo run" : "Demo unavailable";
-      button.title = status.enabled ? "Create the fixed recorded demo run" : "This server is running in local mode";
+      const hosted = Boolean(status.enabled && status.public_demo);
+      buttons.forEach((button) => {
+        button.disabled = !status.enabled;
+        if (button.id === "demo-start-button") button.textContent = status.enabled ? "Start demo run" : "Demo unavailable";
+        button.title = status.enabled ? "Create the fixed recorded demo run" : "This server is running in local mode";
+      });
+      setText("surface-label", hosted ? "EVIDENCE CHAIN / HOSTED DEMO" : status.enabled ? "EVIDENCE CHAIN / LOCAL DEMO" : "EVIDENCE CHAIN / LOCAL MODE");
+      setText("mode-badge", hosted ? "HOSTED DEMO · RECORDED EVIDENCE" : status.enabled ? "LOCAL DEMO · RECORDED EVIDENCE" : "LOCAL MODE");
+      $("mode-badge").className = `badge ${status.enabled ? "badge-recorded" : "badge-neutral"}`;
     } catch (_) {
-      button.disabled = true;
-      button.textContent = "Demo unavailable";
+      buttons.forEach((button) => {
+        button.disabled = true;
+        if (button.id === "demo-start-button") button.textContent = "Demo unavailable";
+      });
+      setText("surface-label", "EVIDENCE CHAIN / LOCAL MODE");
+      setText("mode-badge", "LOCAL MODE");
+      $("mode-badge").className = "badge badge-neutral";
     }
   }
 
@@ -104,8 +115,8 @@
 
   function renderEmpty() {
     setText("run-state", "No run selected");
-    setText("terminal-copy", "Load a run ID with ?run=run-… to inspect server-owned evidence.");
-    setText("provenance-badge", "Waiting for data");
+    setText("terminal-copy", "Start the fixed demo to watch reproduction, diagnosis, approval, and verification happen in order.");
+    setText("provenance-badge", "Demo ready");
     $("provenance-badge").className = "badge badge-neutral";
     ["repository-value", "branch-value", "commit-value", "run-id-value", "provenance-value"].forEach((id) => setText(id, "—"));
     ["export-markdown", "export-json", "approve-button", "reject-button", "diagnosis-button", "recovery-button", "verify-button", "experiment-button", "propose-button"].forEach((id) => { if ($(id)) $(id).disabled = true; });
@@ -115,13 +126,14 @@
     if ($("diff-input")) $("diff-input").value = "";
     if ($("regression-input")) $("regression-input").value = "";
     if ($("experiment-command")) $("experiment-command").value = "";
-    setText("patch-action-status", "Actions unlock only when the server reports an awaiting approval state.");
+    setText("patch-action-status", "Start the demo to unlock the first evidence gate.");
     renderReproduction({ state: "created", input: {} }, []);
     renderHypotheses({ hypotheses: [] });
     renderPatch({ state: "created", patch: null });
     renderVerification({ state: "created", verification: null });
     renderEvidence({}, []);
     renderStages("created");
+    updatePanelVisibility(null);
   }
 
   function snapshotInput(run) { return mapping(run.input || run.intake); }
@@ -164,6 +176,27 @@
     renderPatch(run);
     renderVerification(run);
     renderEvidence(run, events);
+    updatePanelVisibility(run);
+  }
+
+  function updatePanelVisibility(run) {
+    const state = run && run.run_id ? text(run.state, "created") : "created";
+    const hasRun = Boolean(run && run.run_id);
+    const showDiagnosis = hasRun && !["created", "triaging", "reproducing"].includes(state);
+    const showExperiment = showDiagnosis && !["not_reproduced", "blocked"].includes(state);
+    const showPatch = showExperiment && !["not_reproduced", "blocked"].includes(state);
+    const showVerification = hasRun && ["applying", "verifying", "verification_failed", "verification_blocked", "verified"].includes(state);
+    const visibility = {
+      "panel-hypotheses": showDiagnosis,
+      "panel-experiment": showExperiment,
+      "panel-patch": showPatch,
+      "panel-verification": showVerification,
+      "evidence-drawer": hasRun,
+    };
+    Object.entries(visibility).forEach(([className, visible]) => {
+      const node = document.querySelector(`.${className}`);
+      if (node) node.hidden = !visible;
+    });
   }
 
   function statusClass(status) {
@@ -290,6 +323,9 @@
     if ($("experiment-button")) $("experiment-button").disabled = !["diagnosing", "experimenting"].includes(state);
     if ($("propose-button")) $("propose-button").disabled = !["diagnosing", "experimenting"].includes(state);
     if (approval.action) setText("patch-action-status", `${approval.action} by ${text(approval.actor)} at ${text(approval.timestamp)}.`);
+    else if (state === "diagnosing") setText("patch-action-status", "After diagnosis, propose a focused diff with a distinct regression command.");
+    else if (state === "experimenting") setText("patch-action-status", "Record experiment evidence before proposing the patch.");
+    else if (state === "applying") setText("patch-action-status", "The approved patch is ready for deterministic verification.");
   }
 
   function changedLineCount(diff) {
@@ -452,6 +488,7 @@
   if ($("propose-button")) $("propose-button").addEventListener("click", proposePatch);
   if ($("verify-button")) $("verify-button").addEventListener("click", verifyPatch);
   if ($("demo-start-button")) $("demo-start-button").addEventListener("click", startDemoRun);
+  if ($("masthead-demo-button")) $("masthead-demo-button").addEventListener("click", startDemoRun);
   loadDemoStatus();
   loadRun();
 }());

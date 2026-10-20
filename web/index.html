@@ -12,10 +12,10 @@
     <div class="app-shell">
       <header class="topbar" aria-label="ProofFix header">
         <a class="wordmark" href="/" aria-label="ProofFix home"><span class="wordmark-mark" aria-hidden="true">P</span><span>ProofFix</span></a>
-        <div class="topbar-context">
-          <span class="eyebrow">OPERATE / PROOF CHAIN</span>
-          <span class="live-dot" aria-hidden="true"></span>
-          <span id="connection-label">Awaiting run snapshot</span>
+          <div class="topbar-context">
+            <span class="eyebrow">OPERATE / PROOF CHAIN</span>
+            <span class="live-dot" aria-hidden="true"></span>
+            <span id="connection-label">Awaiting run snapshot</span>
         </div>
         <div class="topbar-actions">
           <button class="button button-amber" id="demo-start-button" type="button" aria-label="Start fixed public demo run" disabled>Start demo run</button>
@@ -28,14 +28,16 @@
       <main id="main-content" tabindex="-1">
         <section class="masthead" aria-labelledby="page-title">
           <div>
-            <p class="eyebrow">EVIDENCE CHAIN / LOCALHOST</p>
+            <p id="surface-label" class="eyebrow">EVIDENCE CHAIN / DEMO</p>
             <h1 id="page-title">Operate the proof,<br><em>not the guess.</em></h1>
-            <p class="lede">A bounded record of what was reproduced, why it happened, what changed, and how the result was verified.</p>
+            <p class="lede">Turn a failing test into a reproducible diagnosis, an approved patch, and a verification report — without letting an agent edit blindly.</p>
           </div>
           <div class="state-block" aria-label="Current run status">
             <span class="state-kicker">CURRENT STATE</span>
+            <span id="mode-badge" class="badge badge-recorded">HOSTED DEMO · RECORDED EVIDENCE</span>
             <strong id="run-state">No run selected</strong>
             <span id="terminal-copy" class="state-copy">Load a run ID with <code>?run=run-…</code> to inspect server-owned evidence.</span>
+            <button id="masthead-demo-button" class="button button-amber masthead-cta" type="button" aria-label="Start the fixed ProofFix demo">Start the fixed demo</button>
           </div>
         </section>
 
@@ -130,7 +132,7 @@
           <div class="evidence-columns"><section><h3>Files &amp; lines</h3><div id="file-evidence" class="evidence-list"><p class="empty-state">No file evidence recorded.</p></div></section><section><h3>Commands &amp; artifacts</h3><div id="command-evidence" class="evidence-list"><p class="empty-state">No command evidence recorded.</p></div></section><section><h3>Claims</h3><div id="claim-evidence" class="evidence-list"><p class="empty-state">No claims recorded.</p></div></section><section><h3>OmniRush sessions</h3><div id="session-evidence" class="evidence-list"><p class="empty-state">No sessions recorded.</p></div></section></div>
         </aside>
       </main>
-      <footer class="footer"><span>ProofFix / local evidence control room</span><span>Snapshots and events remain authoritative</span></footer>
+      <footer class="footer"><span>ProofFix / evidence control room</span><span>Snapshots and events remain authoritative</span></footer>
     </div>
     <script src="/app.js" defer></script>
   </body>
