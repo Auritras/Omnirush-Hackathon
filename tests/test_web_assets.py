@@ -61,8 +61,17 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn('id="masthead-demo-button"', html)
         self.assertIn('id="reproduce-button"', html)
         self.assertIn('id="diagnose-button"', html)
-        self.assertIn('id="mode-badge"', html)
         self.assertIn('id="surface-label"', html)
+        self.assertIn('class="metadata-value"', html)
+        self.assertNotIn('class="badge', html)
+        self.assertNotIn('id="mode-badge"', html)
+        self.assertNotIn('Evidence chain / hosted demo', html)
+        self.assertNotIn('Evidence chain / demo', html)
+        self.assertNotIn('Operate / proof chain', html)
+        self.assertEqual(html.count('id="current-step"'), 1)
+        for section in ("run-strip", "stage-rail", "evidence-drawer"):
+            self.assertRegex(html, rf'class="{section}"')
+            self.assertNotRegex(html, rf'class="{section} panel"')
 
     def test_copy_and_loading_semantics_are_plain_and_stage_labels_are_intentional(self):
         html = (WEB / "index.html").read_text(encoding="utf-8")
@@ -73,6 +82,10 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn('aria-busy="true"', html)
         self.assertIn("Loading run data.", html)
         self.assertIn("setBusy", js)
+        self.assertIn("setRunActivity", js)
+        self.assertIn('classList.toggle("run-active"', js)
+        self.assertIn('data-run-active', js)
+        self.assertIn('setText("current-step"', js)
         for phrase in (
             "The immutable intake",
             "Server-owned sequence",
@@ -94,7 +107,7 @@ class WebAssetContractTests(unittest.TestCase):
         ):
             self.assertIn(f">{eyebrow}<", html)
         self.assertIn("Start a demo run", html)
-        self.assertIn("Hosted demo, recorded evidence", html)
+        self.assertIn("Recorded workflow", js)
         self.assertIn("Approval uses this exact diff digest", js)
         self.assertNotIn("— without", html)
 
@@ -173,6 +186,7 @@ class WebAssetContractTests(unittest.TestCase):
         for stage_class in ("stage-active", "stage-complete", "stage-blocked", "stage-failed"):
             self.assertIn(stage_class, css)
         self.assertNotIn(".is-active", css)
+        self.assertIn("main.run-active h1 br { display: none; }", css)
 
     def test_css_bundles_local_plex_faces_and_keeps_label_case_intentional(self):
         css = (WEB / "styles.css").read_text(encoding="utf-8")
@@ -191,6 +205,11 @@ class WebAssetContractTests(unittest.TestCase):
                     f"missing local {family} {weight} face",
                 )
         self.assertNotIn(".live-dot", css)
+        self.assertRegex(css, r"\.run-strip\s*\{[^}]*border-top")
+        self.assertRegex(css, r"\.stage-rail\s*\{[^}]*border-bottom")
+        self.assertRegex(css, r"\.evidence-drawer\s*\{[^}]*border-top")
+        for section in ("run-strip", "stage-rail", "evidence-drawer"):
+            self.assertNotRegex(css, rf"\.{section}\s*\{{[^}}]*border-radius")
         self.assertRegex(css, r"\.hypothesis-card\s*\{[^}]*border:\s*1px solid var\(--line\)")
         self.assertNotRegex(css, r"\.hypothesis-card\s*\{[^}]*border-left")
         uppercase_selectors = re.findall(r"([^{}]+)\{[^{}]*text-transform:\s*uppercase", css, flags=re.DOTALL)

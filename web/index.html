@@ -12,9 +12,6 @@
     <div class="app-shell">
       <header class="topbar" aria-label="ProofFix header">
         <a class="wordmark" href="/" aria-label="ProofFix home"><span class="wordmark-mark" aria-hidden="true">P</span><span>ProofFix</span></a>
-          <div class="topbar-context">
-            <span class="eyebrow">Operate / proof chain</span>
-          </div>
         <div class="topbar-actions">
           <button class="button button-quiet" id="refresh-button" type="button" aria-label="Refresh run snapshot">Refresh</button>
           <button class="button button-amber" id="export-markdown" type="button" aria-label="Export evidence as Markdown" disabled>Export .md</button>
@@ -25,23 +22,22 @@
       <main id="main-content" tabindex="-1" aria-busy="true">
         <section class="masthead" aria-labelledby="page-title">
           <div>
-            <p id="surface-label" class="eyebrow">Evidence chain / demo</p>
+            <p id="surface-label" class="eyebrow">Evidence workspace</p>
             <h1 id="page-title">Operate the proof,<br><em>not the guess.</em></h1>
             <p class="lede">Turn a failing test into a reproducible diagnosis, an approved patch, and a verification report. Keep agent changes tied to evidence.</p>
           </div>
           <div class="state-block" aria-label="Current run status">
             <span class="state-kicker">Current state</span>
-            <span id="mode-badge" class="badge badge-recorded">Hosted demo, recorded evidence</span>
             <strong id="run-state">No run selected</strong>
             <span id="terminal-copy" class="state-copy">Open a run ID with <code>?run=run-…</code> to review its evidence.</span>
             <button id="masthead-demo-button" class="button button-amber masthead-cta" type="button" aria-label="Start a ProofFix demo run">Start a demo run</button>
           </div>
         </section>
 
-        <section class="run-strip panel" aria-labelledby="run-context-heading">
+        <section class="run-strip" aria-labelledby="run-context-heading">
           <div class="section-heading compact-heading">
             <div><p class="eyebrow">01 / TRIAGE</p><h2 id="run-context-heading">Reported issue</h2></div>
-            <span id="provenance-badge" class="badge badge-neutral">Waiting for run data</span>
+            <span id="provenance-badge" class="metadata-value">Waiting for run data</span>
           </div>
           <dl class="context-grid">
             <div><dt>Repository</dt><dd id="repository-value">Not available</dd></div>
@@ -52,8 +48,8 @@
           </dl>
         </section>
 
-        <nav class="stage-rail panel" aria-label="Verification stages">
-          <div class="rail-intro"><span class="eyebrow">Workflow stages</span><strong>Six verification steps</strong><span>The server controls the order.</span></div>
+        <nav class="stage-rail" aria-label="Verification stages">
+          <div class="rail-intro"><span class="eyebrow">Workflow</span><strong>Six stages</strong><span id="current-step">Current step: Triage</span></div>
           <ol id="stage-list">
             <li data-stage="triage"><span class="stage-index">01</span><span class="stage-name">Triage</span><span class="stage-status">Pending</span></li>
             <li data-stage="reproduction"><span class="stage-index">02</span><span class="stage-name">Reproduce</span><span class="stage-status">Pending</span></li>
@@ -143,7 +139,7 @@
           </article>
         </section>
 
-        <aside class="evidence-drawer panel" aria-labelledby="evidence-heading">
+        <aside class="evidence-drawer" aria-labelledby="evidence-heading">
           <div class="section-heading"><div><p class="eyebrow">Evidence drawer</p><h2 id="evidence-heading">Trace every claim</h2></div><span id="evidence-count" class="count-label">0 records</span></div>
           <div class="evidence-columns"><section><h3>Files &amp; lines</h3><div id="file-evidence" class="evidence-list"><p class="empty-state">No file evidence recorded.</p></div></section><section><h3>Commands &amp; artifacts</h3><div id="command-evidence" class="evidence-list"><p class="empty-state">No command evidence recorded.</p></div></section><section><h3>Claims</h3><div id="claim-evidence" class="evidence-list"><p class="empty-state">No claims recorded.</p></div></section><section><h3>OmniRush sessions</h3><div id="session-evidence" class="evidence-list"><p class="empty-state">No sessions recorded.</p></div></section></div>
         </aside>

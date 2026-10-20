@@ -26,6 +26,12 @@
   const text = (value, fallback = "Not available") => value === null || value === undefined || value === "" ? fallback : String(value);
   const setText = (id, value, fallback) => { const node = $(id); if (node) node.textContent = text(value, fallback); return node; };
   const setBusy = (busy) => { const node = $("main-content"); if (node) node.setAttribute("aria-busy", String(Boolean(busy))); };
+  const setRunActivity = (active) => {
+    const node = $("main-content");
+    if (!node) return;
+    node.classList.toggle("run-active", Boolean(active));
+    node.setAttribute("data-run-active", Boolean(active) ? "true" : "false");
+  };
   const clear = (node) => { while (node && node.firstChild) node.removeChild(node.firstChild); };
   const create = (tag, value, className) => { const node = document.createElement(tag); if (className) node.className = className; if (value !== undefined) node.textContent = text(value, ""); return node; };
   const listValue = (value) => Array.isArray(value) ? value : [];
@@ -132,9 +138,7 @@
       button.disabled = !demoEnabled || demoStartInFlight;
       button.textContent = demoStartInFlight ? "Starting demo..." : status.enabled && (currentRun || runIdFromUrl()) ? "Start another demo run" : status.enabled ? "Start a demo run" : "Demo unavailable";
       button.title = status.enabled ? "Create a recorded ProofFix demo run" : "ProofFix is running in local mode";
-      setText("surface-label", hosted ? "Evidence chain / hosted demo" : status.enabled ? "Evidence chain / local demo" : "Evidence chain / local mode");
-      setText("mode-badge", hosted ? "Hosted demo, recorded evidence" : status.enabled ? "Local demo, recorded evidence" : "Local mode");
-      $("mode-badge").className = `badge ${status.enabled ? "badge-recorded" : "badge-neutral"}`;
+       setText("surface-label", hosted ? "Recorded workflow" : status.enabled ? "Local demo" : "Local mode");
       if (currentRun) {
         applyDemoDefaults(currentRun);
         renderExperimentPanel(currentRun);
@@ -145,9 +149,7 @@
       hostedDemo = false;
       button.disabled = true;
       button.textContent = "Demo unavailable";
-      setText("surface-label", "Evidence chain / local mode");
-      setText("mode-badge", "Local mode");
-      $("mode-badge").className = "badge badge-neutral";
+       setText("surface-label", "Local mode");
     }
   }
 
@@ -175,10 +177,10 @@
   function announce(message) { const node = $("live-status"); if (node) node.textContent = message; }
 
   function renderEmpty() {
+    setRunActivity(false);
     setText("run-state", "No run selected");
     setText("terminal-copy", "Start a demo run to review reproduction, diagnosis, approval, and verification in order.");
     setText("provenance-badge", "Demo ready");
-    $("provenance-badge").className = "badge badge-neutral";
     ["repository-value", "branch-value", "commit-value", "run-id-value", "provenance-value"].forEach((id) => setText(id, "Not available"));
     ["export-markdown", "export-json", "reproduce-button", "diagnose-button", "approve-button", "reject-button", "diagnosis-button", "recovery-button", "verify-button", "experiment-button", "propose-button"].forEach((id) => { if ($(id)) $(id).disabled = true; });
     if ($("actor-input")) $("actor-input").value = "";
@@ -218,6 +220,7 @@
   }
 
   function render(run, events) {
+    setRunActivity(Boolean(run && run.run_id));
     const input = snapshotInput(run);
     const repo = repositorySnapshot(run);
     const state = text(run.state, "unknown");
@@ -230,7 +233,6 @@
     const provenance = input.provenance || input.mode || run.provenance || run.mode || (state === "verified" ? "live OmniRush" : "Not available");
     setText("provenance-value", provenance);
     setText("provenance-badge", provenance);
-    $("provenance-badge").className = `badge ${String(provenance).toLowerCase().includes("recorded") || String(provenance).toLowerCase().includes("demo") ? "badge-recorded" : "badge-live"}`;
     ["export-markdown", "export-json"].forEach((id) => { $(id).disabled = !run.run_id; });
     renderStages(state);
     renderReproduction(run, events);
@@ -281,6 +283,9 @@
   }
 
   function renderStages(state) {
+    const activeStages = { triaging: "Triage", reproducing: "Reproduce", diagnosing: "Diagnose", experimenting: "Evidence check", patch_proposed: "Fix review", awaiting_approval: "Fix review", applying: "Fix review", verifying: "Verify" };
+    const terminalStages = { blocked: "Blocked", not_reproduced: "Not reproduced", verification_failed: "Verification failed", verification_blocked: "Verification blocked", verified: "Verified" };
+    setText("current-step", `Current step: ${activeStages[state] || terminalStages[state] || "Triage"}`);
     STAGES.forEach(([key]) => {
       const item = document.querySelector(`[data-stage="${key}"]`);
       if (!item) return;
