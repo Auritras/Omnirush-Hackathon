@@ -81,6 +81,8 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn("renderClaimsList", js)
         self.assertIn("updatePanelVisibility", js)
         self.assertIn("advanceStage", js)
+        self.assertIn("report.${extension}", js)
+        self.assertIn("link.download", js)
         self.assertIn("Start the fixed demo", html)
         self.assertIn("runExperiment", js)
         self.assertIn("proposePatch", js)

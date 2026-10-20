@@ -444,8 +444,20 @@
   async function exportReport(format) {
     if (!currentRun || !currentRun.run_id) return;
     try {
-      const result = await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}/export`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ format }) });
-      setText("patch-action-status", `Exported ${format} report to ${text(result.path)}.`); announce(`${format} evidence export completed.`);
+      const extension = format === "json" ? "json" : "md";
+      const response = await fetch(`/api/runs/${encodeURIComponent(currentRun.run_id)}/report.${extension}`, { headers: { "Accept": extension === "json" ? "application/json" : "text/markdown" } });
+      if (!response.ok) throw new Error(`report request failed (${response.status})`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `proofix-${currentRun.run_id}.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setText("patch-action-status", `Downloaded ${extension.toUpperCase()} evidence report.`);
+      announce(`${extension.toUpperCase()} evidence download completed.`);
     } catch (error) { announce(`Export failed: ${error.message}`); setText("patch-action-status", `Export failed: ${error.message}`); }
   }
 
