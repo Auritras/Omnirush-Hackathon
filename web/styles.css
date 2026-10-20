@@ -140,6 +140,8 @@ pre { margin: 0; min-height: 132px; max-height: 220px; overflow: auto; padding: 
 .patch-meta code, .patch-meta strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .safety-guarantee { display: grid; gap: 4px; margin-top: 15px; padding: 11px 12px; border: 1px solid rgba(119,196,154,.35); border-left: 2px solid var(--green); background: rgba(119,196,154,.06); color: var(--muted); font-size: 11px; line-height: 1.45; }
 .safety-guarantee strong { color: var(--green); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+.patch-empty-state { display: grid; gap: 6px; margin-top: 15px; padding: 15px 14px; border: 1px dashed var(--line-bright); border-radius: 6px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.patch-empty-state strong { color: var(--amber-soft); font-size: 10px; letter-spacing: .12em; }
 .diff-wrap pre { margin-top: 8px; min-height: 128px; max-height: 230px; color: #c7d4df; }
 .patch-details { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .patch-details > div { min-width: 0; }

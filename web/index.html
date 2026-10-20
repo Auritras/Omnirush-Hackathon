@@ -118,10 +118,11 @@
                <strong id="patch-hypothesis">A diagnosis will provide the context for a proposed fix.</strong>
                <p id="patch-context-detail">The fix must address the recorded failure and include a distinct regression check.</p>
              </div>
-             <div class="patch-meta"><div><span class="field-label">DIGEST</span><code id="patch-digest">—</code></div><div><span class="field-label">RISK</span><strong id="patch-risk">—</strong></div><div><span class="field-label">CHANGED LINES</span><strong id="patch-lines">—</strong></div></div>
+             <div class="patch-meta"><div><span class="field-label">DIGEST</span><code id="patch-digest">Calculated after proposal</code></div><div><span class="field-label">RISK</span><strong id="patch-risk">Calculated after proposal</strong></div><div><span class="field-label">CHANGED LINES</span><strong id="patch-lines">Calculated after proposal</strong></div></div>
              <div class="safety-guarantee" id="patch-safety"><strong>Safety guarantee</strong><span id="patch-safety-copy">No fix is proposed yet. Once recorded, approval will be bound to the server-calculated digest of the exact diff.</span></div>
-            <div class="diff-wrap"><span class="field-label">DIFF</span><pre id="patch-diff">No patch proposal recorded.</pre></div>
-            <div class="patch-details"><div><span class="field-label">CHANGED FILES</span><div id="changed-files" class="chip-list"><span class="muted">None recorded</span></div></div><div><span class="field-label">REGRESSION TEST</span><code id="regression-test">—</code></div></div>
+             <div id="patch-empty-state" class="patch-empty-state"><strong>NO FIX PROPOSAL YET</strong><span>Draft a focused change and a distinct regression check below. The server will calculate the digest, changed files, risk, and line count after submission.</span></div>
+             <div id="patch-preview" hidden><div class="diff-wrap"><span class="field-label">RECORDED DIFF</span><pre id="patch-diff">No patch proposal recorded.</pre></div>
+             <div class="patch-details"><div><span class="field-label">CHANGED FILES</span><div id="changed-files" class="chip-list"><span class="muted">None recorded</span></div></div><div><span class="field-label">REGRESSION TEST</span><code id="regression-test">Required before proposal</code></div></div></div>
              <div class="proposal-form" id="proposal-form" aria-label="Fix proposal">
                <label for="diff-input">Proposed change (unified diff)<textarea id="diff-input" rows="7" required placeholder="diff --git ..." aria-describedby="proposal-validation"></textarea></label>
                <label for="regression-input">Regression check to run<input id="regression-input" type="text" required placeholder="python -m unittest tests.test_parser" aria-describedby="proposal-validation"></label>
