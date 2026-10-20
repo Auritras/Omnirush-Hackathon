@@ -126,6 +126,12 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn(":focus-visible", css)
         self.assertIn("overflow", css)
         self.assertIn("overflow-x: hidden", css)
+        self.assertIn("--font-sans", css)
+        self.assertIn("--space-8: 64px", css)
+        self.assertIn("--text-md: 14px", css)
+        self.assertIn("--faint: #82909f", css)
+        self.assertIn("opacity: .68", css)
+        self.assertNotIn("Georgia", css)
         for stage_class in ("stage-active", "stage-complete", "stage-blocked", "stage-failed"):
             self.assertIn(stage_class, css)
         self.assertNotIn(".is-active", css)
