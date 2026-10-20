@@ -26,20 +26,19 @@ important boundaries server-owned:
 The dashboard renders persisted snapshots and events; it does not invent
 workflow state in the browser.
 
+> **Hosted demo:** [Open the restricted ProofFix demo](https://proofix-demo.onrender.com/)
+> in recorded/demo mode using the checked-in fixture.
+
 ## Two-minute hosted demo
 
-After deploying the checked-in Render Blueprint, replace `PUBLIC_DEMO_URL` in
-the commands below with the URL shown by Render. This repository intentionally
-does not claim a live URL until one exists.
-
-1. Open `https://PUBLIC_DEMO_URL/`.
+1. Open the hosted demo link above.
 2. Click **Start demo run**. No run ID or repository path is required.
 3. Review the fixed fixture's recorded reproduction and OmniRush diagnosis.
 4. Advance the visible guarded stages as desired. The dashboard enables only
    actions allowed by the server snapshot.
 5. Use **Export .md** or **Export .json** to inspect the evidence report.
-6. Check `https://PUBLIC_DEMO_URL/api/demo` for the deployment's restricted
-   demo status and `https://PUBLIC_DEMO_URL/health` for health.
+6. Check `/api/demo` for the deployment's restricted demo status and `/health`
+   for health.
 
 The hosted demo is deliberately restricted: it materializes only the checked-in
 `fixtures/broken-parser-repo`, uses checked-in recorded OmniRush responses,
@@ -207,8 +206,8 @@ path without changing local defaults.
 existing Dockerfile, checks `/health`, binds Render's injected `PORT`, and
 stores the demo data root at `.proofix-data`. It sets only public-demo flags and
 contains no GitHub credentials or secrets. Deploy it from the repository in
-Render's Blueprint flow; then use the generated service URL as
-`PUBLIC_DEMO_URL` in the hosted-demo instructions above.
+Render's Blueprint flow; the hosted demo link above points to the deployed
+service.
 
 Hosted-demo limitations are intentional: the service has no user
 authentication, no multi-user control plane, no arbitrary repository intake,
