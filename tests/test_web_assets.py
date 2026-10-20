@@ -61,7 +61,6 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn('id="masthead-demo-button"', html)
         self.assertIn('id="reproduce-button"', html)
         self.assertIn('id="diagnose-button"', html)
-        self.assertIn('id="surface-label"', html)
         self.assertIn('class="metadata-value"', html)
         self.assertNotIn('class="badge', html)
         self.assertNotIn('id="mode-badge"', html)
@@ -119,7 +118,7 @@ class WebAssetContractTests(unittest.TestCase):
         ):
             self.assertIn(f">{eyebrow}<", html)
         self.assertIn("Start a demo run", html)
-        self.assertIn("Recorded workflow", js)
+        self.assertIn("Start another demo run", js)
         self.assertIn("Approval uses this exact diff digest", js)
         self.assertNotIn("— without", html)
 

@@ -117,10 +117,11 @@ main.run-active .masthead { grid-template-columns: minmax(0, 1fr) minmax(360px, 
 main.run-active h1 { max-width: 720px; margin-bottom: var(--space-1); font-size: clamp(36px, 4.8vw, 58px); }
 main.run-active h1 br { display: none; }
 main.run-active .lede { max-width: 680px; }
-main.run-active .state-block { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-1) var(--space-2); padding-block: 0; }
+main.run-active .state-block { display: grid; grid-template-columns: auto auto minmax(160px, 1fr) auto; align-items: center; column-gap: var(--space-2); padding-block: 0; }
+main.run-active .state-kicker { grid-column: 1; grid-row: 1; }
 main.run-active .state-block strong { margin: 0; font-size: 20px; }
-main.run-active .state-copy { flex: 1 1 180px; }
-main.run-active .masthead-cta { margin: 0 0 0 auto; }
+main.run-active .state-copy { grid-column: 3; grid-row: 1; max-width: 280px; }
+main.run-active .masthead-cta { grid-column: 4; grid-row: 1; margin: 0; }
 main.run-active h1 { text-wrap: balance; overflow-wrap: normal; word-break: normal; }
 
 .panel { background: var(--ink-panel); border: 1px solid var(--line); border-radius: var(--radius); }

@@ -155,7 +155,6 @@
       button.disabled = !demoEnabled || demoStartInFlight;
       button.textContent = demoStartInFlight ? "Starting demo..." : status.enabled && (currentRun || runIdFromUrl()) ? "Start another demo run" : status.enabled ? "Start a demo run" : "Demo unavailable";
       button.title = status.enabled ? "Create a recorded ProofFix demo run" : "ProofFix is running in local mode";
-       setText("surface-label", hosted ? "Recorded workflow" : status.enabled ? "Local demo" : "Local mode");
       if (currentRun) {
         applyDemoDefaults(currentRun);
         renderExperimentPanel(currentRun);
@@ -166,7 +165,6 @@
       hostedDemo = false;
       button.disabled = true;
       button.textContent = "Demo unavailable";
-       setText("surface-label", "Local mode");
     }
   }
 
