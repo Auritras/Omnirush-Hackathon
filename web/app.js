@@ -18,6 +18,7 @@
     verified: "All server-recorded verification checks passed. The patch is verified for this run."
   };
   const ACTION_ENDPOINTS = { approve: "/approve", reject: "/reject", diagnosis: "/request-diagnosis", recover: "/return-to-diagnosis", verify: "/verify", export: "/export", experiment: "/experiment", propose: "/propose" };
+  const STAGE_ENDPOINTS = { reproduce: "/reproduce", diagnose: "/diagnose" };
   let currentRun = null;
   let currentEvents = [];
 
@@ -119,7 +120,7 @@
     setText("provenance-badge", "Demo ready");
     $("provenance-badge").className = "badge badge-neutral";
     ["repository-value", "branch-value", "commit-value", "run-id-value", "provenance-value"].forEach((id) => setText(id, "—"));
-    ["export-markdown", "export-json", "approve-button", "reject-button", "diagnosis-button", "recovery-button", "verify-button", "experiment-button", "propose-button"].forEach((id) => { if ($(id)) $(id).disabled = true; });
+    ["export-markdown", "export-json", "reproduce-button", "diagnose-button", "approve-button", "reject-button", "diagnosis-button", "recovery-button", "verify-button", "experiment-button", "propose-button"].forEach((id) => { if ($(id)) $(id).disabled = true; });
     setText("connection-label", "Awaiting run snapshot");
     if ($("actor-input")) $("actor-input").value = "";
     if ($("timestamp-input")) $("timestamp-input").value = "";
@@ -230,6 +231,11 @@
 
   function renderReproduction(run, events) {
     const record = reproductionRecord(run, events);
+    if ($("reproduce-button")) {
+      const ready = text(run.state) === "reproducing";
+      $("reproduce-button").disabled = !ready;
+      $("reproduce-button").textContent = ready ? "Run reproduction" : "Reproduction recorded";
+    }
     setStatus("reproduction-status", record.status || run.state, record.status === "reproduced" ? "Complete" : record.status === "not_reproduced" ? "Failed" : record.status === "blocked" ? "Blocked" : "Pending");
     const input = snapshotInput(run);
     setText("reproduction-command", record.command || input.command, "No reproduction command recorded.");
@@ -259,6 +265,11 @@
   function renderHypotheses(run) {
     const list = $("hypotheses-list"); clear(list);
     const hypotheses = listValue(run.hypotheses);
+    if ($("diagnose-button")) {
+      const ready = text(run.state) === "reproduced";
+      $("diagnose-button").disabled = !ready;
+      $("diagnose-button").textContent = ready ? "Run diagnosis" : hypotheses.length ? "Diagnosis recorded" : "Run diagnosis";
+    }
     setText("hypothesis-count", `${hypotheses.length} specialist${hypotheses.length === 1 ? "" : "s"}`);
     if (!hypotheses.length) { list.appendChild(create("p", "No specialist hypotheses have been recorded. Diagnosis remains unproven.", "empty-state")); return; }
     hypotheses.forEach((hypothesis) => {
@@ -446,6 +457,21 @@
     } catch (error) { setText("experiment-status", `Blocked: ${error.message}`); announce(`Experiment not accepted: ${error.message}`); }
   }
 
+  async function advanceStage(stage) {
+    if (!currentRun || !currentRun.run_id) return;
+    const button = stage === "reproduce" ? $("reproduce-button") : $("diagnose-button");
+    if (button) button.disabled = true;
+    try {
+      await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${STAGE_ENDPOINTS[stage]}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: "{}" });
+      await loadRun();
+      announce(`${stage === "reproduce" ? "Reproduction" : "Diagnosis"} completed; snapshot and evidence refreshed.`);
+    } catch (error) {
+      if (button) button.disabled = false;
+      setText("patch-action-status", `${stage === "reproduce" ? "Reproduction" : "Diagnosis"} not accepted: ${error.message}`);
+      announce(`${stage === "reproduce" ? "Reproduction" : "Diagnosis"} not accepted: ${error.message}`);
+    }
+  }
+
   async function proposePatch() {
     if (!currentRun || !currentRun.run_id) return;
     const diff = $("diff-input").value; const regression_test = $("regression-input").value.trim();
@@ -487,6 +513,8 @@
   if ($("experiment-button")) $("experiment-button").addEventListener("click", runExperiment);
   if ($("propose-button")) $("propose-button").addEventListener("click", proposePatch);
   if ($("verify-button")) $("verify-button").addEventListener("click", verifyPatch);
+  if ($("reproduce-button")) $("reproduce-button").addEventListener("click", () => advanceStage("reproduce"));
+  if ($("diagnose-button")) $("diagnose-button").addEventListener("click", () => advanceStage("diagnose"));
   if ($("demo-start-button")) $("demo-start-button").addEventListener("click", startDemoRun);
   if ($("masthead-demo-button")) $("masthead-demo-button").addEventListener("click", startDemoRun);
   loadDemoStatus();

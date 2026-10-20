@@ -74,7 +74,7 @@
           <article class="panel panel-reproduction" aria-labelledby="reproduction-heading">
             <div class="section-heading">
               <div><p class="eyebrow">02 / REPRODUCE</p><h2 id="reproduction-heading">Reproduction record</h2></div>
-              <span id="reproduction-status" class="status-pill status-pending">Pending</span>
+              <div class="action-row"><button id="reproduce-button" class="button button-amber" type="button" disabled>Run reproduction</button><span id="reproduction-status" class="status-pill status-pending">Pending</span></div>
             </div>
             <div class="command-box"><span class="field-label">EXACT COMMAND</span><code id="reproduction-command">No reproduction command recorded.</code></div>
             <div class="metric-row">
@@ -90,7 +90,7 @@
           </article>
 
           <article class="panel panel-hypotheses" aria-labelledby="hypotheses-heading">
-            <div class="section-heading"><div><p class="eyebrow">03 / DIAGNOSE</p><h2 id="hypotheses-heading">Hypothesis board</h2></div><span id="hypothesis-count" class="count-label">0 specialists</span></div>
+            <div class="section-heading"><div><p class="eyebrow">03 / DIAGNOSE</p><h2 id="hypotheses-heading">Hypothesis board</h2></div><div class="action-row"><button id="diagnose-button" class="button button-amber" type="button" disabled>Run diagnosis</button><span id="hypothesis-count" class="count-label">0 specialists</span></div></div>
             <div id="hypotheses-list" class="hypothesis-list"><p class="empty-state">No specialist hypotheses have been recorded. Diagnosis remains unproven.</p></div>
           </article>
 

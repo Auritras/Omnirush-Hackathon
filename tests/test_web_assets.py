@@ -42,6 +42,8 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn('id="recovery-button"', html)
         self.assertIn('id="demo-start-button"', html)
         self.assertIn('id="masthead-demo-button"', html)
+        self.assertIn('id="reproduce-button"', html)
+        self.assertIn('id="diagnose-button"', html)
         self.assertIn('id="mode-badge"', html)
         self.assertIn('id="surface-label"', html)
 
@@ -55,6 +57,8 @@ class WebAssetContractTests(unittest.TestCase):
             "/api/demo",
             "/api/demo/start",
             "/api/runs/",
+            "/reproduce",
+            "/diagnose",
             "/events",
             "/experiment",
             "/propose",
@@ -76,6 +80,7 @@ class WebAssetContractTests(unittest.TestCase):
         self.assertIn("collectClaims", js)
         self.assertIn("renderClaimsList", js)
         self.assertIn("updatePanelVisibility", js)
+        self.assertIn("advanceStage", js)
         self.assertIn("Start the fixed demo", html)
         self.assertIn("runExperiment", js)
         self.assertIn("proposePatch", js)
