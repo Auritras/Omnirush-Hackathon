@@ -120,6 +120,9 @@ pre { margin: 0; min-height: 132px; max-height: 220px; overflow: auto; padding: 
 .hypothesis-title { margin: 0 0 11px; font-size: 13px; line-height: 1.45; }
 .hypothesis-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; color: var(--muted); font-size: 10px; }
 .hypothesis-meta strong { color: var(--paper); }
+.workflow-context { display: grid; gap: 6px; margin: -5px 0 15px; padding: 12px 13px; border: 1px solid var(--line); border-left: 2px solid var(--blue); background: rgba(139,182,216,.05); }
+.workflow-context strong { color: var(--paper); font-size: 12px; line-height: 1.45; }
+.workflow-context p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .experiment-block { display: grid; gap: 6px; margin-top: 12px; padding: 10px 11px; border: 1px solid var(--line); border-left: 2px solid var(--blue); background: rgba(139,182,216,.05); }
 .experiment-block .field-label:last-of-type { margin-top: 4px; color: var(--blue); }
 .experiment-block p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
@@ -135,6 +138,8 @@ pre { margin: 0; min-height: 132px; max-height: 220px; overflow: auto; padding: 
 .patch-meta { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 12px; }
 .patch-meta > div { min-width: 0; display: grid; gap: 7px; }
 .patch-meta code, .patch-meta strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.safety-guarantee { display: grid; gap: 4px; margin-top: 15px; padding: 11px 12px; border: 1px solid rgba(119,196,154,.35); border-left: 2px solid var(--green); background: rgba(119,196,154,.06); color: var(--muted); font-size: 11px; line-height: 1.45; }
+.safety-guarantee strong { color: var(--green); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
 .diff-wrap pre { margin-top: 8px; min-height: 128px; max-height: 230px; color: #c7d4df; }
 .patch-details { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .patch-details > div { min-width: 0; }
@@ -143,7 +148,12 @@ pre { margin: 0; min-height: 132px; max-height: 220px; overflow: auto; padding: 
 .approval-form label { display: grid; gap: 7px; color: var(--faint); font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .approval-form input { min-width: 0; border: 1px solid var(--line); border-radius: 5px; padding: 9px 10px; background: var(--ink-raised); color: var(--paper); font: 11px var(--mono); }
 .approval-form input::placeholder { color: var(--faint); }
+.approval-form input[readonly] { color: var(--muted); border-style: dashed; }
 .form-note { margin: 11px 0 0; color: var(--faint); font-size: 10px; line-height: 1.45; }
+.guardrail-note { margin: 0; padding: 9px 10px; border-left: 2px solid var(--amber); color: var(--muted); font-size: 10px; line-height: 1.5; }
+.optional-label { color: var(--faint); font-size: 9px; font-weight: 400; letter-spacing: .02em; text-transform: none; }
+.validation-note.has-error { color: var(--red); }
+.experiment-form input:disabled { color: var(--faint); cursor: not-allowed; opacity: .65; }
 .verification-list { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; counter-reset: checks; }
 .verification-item { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: start; padding: 11px 0; border-bottom: 1px solid var(--line); counter-increment: checks; }
 .verification-item::before { content: counter(checks, decimal-leading-zero); color: var(--faint); font: 10px var(--mono); padding-top: 2px; }

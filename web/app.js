@@ -6,8 +6,8 @@
     ["triage", "Triage"],
     ["reproduction", "Reproduce"],
     ["diagnosis", "Diagnose"],
-    ["experiment", "Experiment"],
-    ["patch", "Patch"],
+    ["experiment", "Evidence check"],
+    ["patch", "Fix review"],
     ["verification", "Verify"]
   ];
   const TERMINAL_COPY = {
@@ -29,6 +29,23 @@
   const create = (tag, value, className) => { const node = document.createElement(tag); if (className) node.className = className; if (value !== undefined) node.textContent = text(value, ""); return node; };
   const listValue = (value) => Array.isArray(value) ? value : [];
   const mapping = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const EXPERIMENT_STATES = ["diagnosing", "experimenting"];
+  const PATCH_PROPOSAL_STATES = ["diagnosing", "experimenting"];
+
+  function latestHypothesis(run) {
+    const hypotheses = listValue(run && run.hypotheses);
+    return hypotheses[hypotheses.length - 1] || null;
+  }
+
+  function hypothesisEvidence(hypothesis) {
+    if (!hypothesis) return "A recorded diagnosis will provide the context for this check.";
+    const supporting = listValue(hypothesis.supporting_evidence).map((item) => mapping(item).summary || item).filter(Boolean);
+    return supporting.length ? `Supporting evidence: ${supporting.join("; ")}` : "No supporting evidence was recorded yet; treat the result as exploratory.";
+  }
+
+  function utcTimestampNow() {
+    return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
 
   async function api(path, options) {
     const response = await fetch(path, Object.assign({ headers: { "Accept": "application/json" } }, options || {}));
@@ -127,6 +144,7 @@
     if ($("diff-input")) $("diff-input").value = "";
     if ($("regression-input")) $("regression-input").value = "";
     if ($("experiment-command")) $("experiment-command").value = "";
+    if ($("experiment-regression")) $("experiment-regression").value = "";
     setText("patch-action-status", "Start the demo to unlock the first evidence gate.");
     renderReproduction({ state: "created", input: {} }, []);
     renderHypotheses({ hypotheses: [] });
@@ -134,6 +152,7 @@
     renderVerification({ state: "created", verification: null });
     renderEvidence({}, []);
     renderStages("created");
+    renderExperimentPanel(null);
     updatePanelVisibility(null);
   }
 
@@ -174,6 +193,7 @@
     renderStages(state);
     renderReproduction(run, events);
     renderHypotheses(run);
+    renderExperimentPanel(run);
     renderPatch(run);
     renderVerification(run);
     renderEvidence(run, events);
@@ -310,6 +330,71 @@
     return block;
   }
 
+  function experimentValidation(run) {
+    if (!run || !run.run_id) return "Start a run before choosing an evidence check.";
+    if (!EXPERIMENT_STATES.includes(text(run.state))) return "Evidence checks unlock after a diagnosis is recorded by the server.";
+    const kind = $("experiment-kind") ? $("experiment-kind").value : "";
+    const command = $("experiment-command") ? $("experiment-command").value.trim() : "";
+    const regression = $("experiment-regression") ? $("experiment-regression").value.trim() : "";
+    if (!kind) return "Choose a check type.";
+    if (!command) return "Enter the command for this check.";
+    if (kind === "proposed_regression_test" && !regression) return "Enter the regression command for this check.";
+    return "";
+  }
+
+  function renderExperimentPanel(run) {
+    const hypothesis = latestHypothesis(run);
+    setText("experiment-hypothesis", hypothesis ? hypothesis.hypothesis : run && run.run_id ? "Diagnosis context is ready for a focused check." : "Diagnosis context will appear after reproduction.");
+    setText("experiment-context-detail", hypothesisEvidence(hypothesis));
+    const state = text(run && run.state, "created");
+    const validation = experimentValidation(run);
+    const kind = $("experiment-kind") ? $("experiment-kind").value : "";
+    if ($("experiment-kind")) $("experiment-kind").setAttribute("aria-invalid", String(!kind && EXPERIMENT_STATES.includes(state)));
+    if ($("experiment-command")) $("experiment-command").setAttribute("aria-invalid", String(!$("experiment-command").value.trim() && EXPERIMENT_STATES.includes(state)));
+    if ($("experiment-regression")) {
+      $("experiment-regression").disabled = kind !== "proposed_regression_test";
+      $("experiment-regression").setAttribute("aria-hidden", String(kind !== "proposed_regression_test"));
+    }
+    if ($("experiment-button")) {
+      $("experiment-button").disabled = Boolean(validation) || !EXPERIMENT_STATES.includes(state);
+      $("experiment-button").textContent = state === "experimenting" ? "Evidence check running…" : "Run evidence check";
+    }
+    if ($("experiment-validation")) {
+      const experiments = listValue(run && run.experiments);
+      const latest = experiments[experiments.length - 1];
+      const message = validation || (latest ? `Latest result: ${text(latest.status, "recorded")} · output digest ${text(latest.output_digest)}` : "Ready when the check type and command are valid.");
+      setText("experiment-validation", message);
+      $("experiment-validation").className = `form-note validation-note${validation ? " has-error" : ""}`;
+    }
+    if ($("experiment-status") && state === "experimenting") setStatus("experiment-status", "running", "Running");
+    else if ($("experiment-status") && !listValue(run && run.experiments).length) setStatus("experiment-status", "pending", "Not started");
+  }
+
+  function proposalValidation(run) {
+    if (!run || !run.run_id) return "Start a run before proposing a fix.";
+    if (!PATCH_PROPOSAL_STATES.includes(text(run.state))) return "A fix can be submitted after diagnosis, while the server accepts proposals.";
+    const diff = $("diff-input") ? $("diff-input").value.trim() : "";
+    const regression = $("regression-input") ? $("regression-input").value.trim() : "";
+    if (!diff) return "Add the proposed change as a unified diff.";
+    if (!(diff.includes("diff --git") || (diff.includes("--- ") && diff.includes("+++ ")))) return "Use a unified diff with file headers (for example, diff --git or --- / +++).";
+    if (!regression) return "Enter the distinct regression check the server should run.";
+    return "";
+  }
+
+  function renderProposalForm(run) {
+    const state = text(run && run.state, "created");
+    const validation = proposalValidation(run);
+    const canPropose = PATCH_PROPOSAL_STATES.includes(state);
+    if ($("diff-input")) $("diff-input").setAttribute("aria-invalid", String(canPropose && !$("diff-input").value.trim()));
+    if ($("regression-input")) $("regression-input").setAttribute("aria-invalid", String(canPropose && !$("regression-input").value.trim()));
+    if ($("proposal-form")) $("proposal-form").hidden = !canPropose;
+    if ($("propose-button")) $("propose-button").disabled = Boolean(validation) || !canPropose;
+    if ($("proposal-validation")) {
+      setText("proposal-validation", validation || "Ready to submit. The server will calculate and persist the safety digest.");
+      $("proposal-validation").className = `form-note validation-note${validation ? " has-error" : ""}`;
+    }
+  }
+
   function evidenceColumn(label, values) {
     const column = create("div"); column.appendChild(create("span", label, "field-label"));
     const items = listValue(values); const summary = items.map((item) => mapping(item).summary || item).join("; ");
@@ -319,6 +404,9 @@
   function renderPatch(run) {
     const patch = mapping(run.patch); const approval = mapping(patch.approval || patch.decision);
     const state = text(run.state);
+    const hypothesis = latestHypothesis(run);
+    setText("patch-hypothesis", hypothesis ? hypothesis.hypothesis : "A diagnosis will provide the context for a proposed fix.");
+    setText("patch-context-detail", hypothesis ? hypothesisEvidence(hypothesis) : "The fix must address the recorded failure and include a distinct regression check.");
     setStatus("patch-status", patch.digest ? state : "No proposal", patch.digest && state === "awaiting_approval" ? "Active" : patch.digest && ["applying", "verifying", "verified"].includes(state) ? "Complete" : patch.digest ? "Pending" : "Pending");
     setText("patch-digest", patch.digest);
     setText("patch-risk", patch.risk_summary);
@@ -327,16 +415,27 @@
     chips($("changed-files"), listValue(patch.files));
     setText("regression-test", patch.regression_test);
     if ($("regression-input") && patch.regression_test) $("regression-input").value = patch.regression_test;
-    const enabled = state === "awaiting_approval" && Boolean(patch.digest);
-    ["approve-button", "reject-button", "diagnosis-button"].forEach((id) => { $(id).disabled = !enabled; });
-    if ($("recovery-button")) $("recovery-button").disabled = !["verification_failed", "verification_blocked"].includes(state);
+    const awaitingDecision = state === "awaiting_approval" && Boolean(patch.digest);
+    const recovering = ["verification_failed", "verification_blocked"].includes(state);
+    const needsAudit = awaitingDecision || recovering;
+    if ($("approval-form")) $("approval-form").hidden = !needsAudit;
+    if ($("decision-controls")) $("decision-controls").hidden = !awaitingDecision;
+    if ($("recovery-controls")) $("recovery-controls").hidden = !recovering;
+    if (needsAudit && $("timestamp-input") && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test($("timestamp-input").value)) $("timestamp-input").value = utcTimestampNow();
+    const actorReady = Boolean($("actor-input") && $("actor-input").value.trim());
+    const auditReady = actorReady && Boolean($("timestamp-input") && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test($("timestamp-input").value));
+    ["approve-button", "reject-button", "diagnosis-button"].forEach((id) => { if ($(id)) $(id).disabled = !awaitingDecision || !auditReady; });
+    if ($("recovery-button")) $("recovery-button").disabled = !recovering || !auditReady;
     if ($("verify-button")) $("verify-button").disabled = state !== "applying";
-    if ($("experiment-button")) $("experiment-button").disabled = !["diagnosing", "experimenting"].includes(state);
-    if ($("propose-button")) $("propose-button").disabled = !["diagnosing", "experimenting"].includes(state);
     if (approval.action) setText("patch-action-status", `${approval.action} by ${text(approval.actor)} at ${text(approval.timestamp)}.`);
-    else if (state === "diagnosing") setText("patch-action-status", "After diagnosis, propose a focused diff with a distinct regression command.");
-    else if (state === "experimenting") setText("patch-action-status", "Record experiment evidence before proposing the patch.");
-    else if (state === "applying") setText("patch-action-status", "The approved patch is ready for deterministic verification.");
+    else if (state === "diagnosing") setText("patch-action-status", "Add a focused diff and a distinct regression check. The server will calculate its digest before review.");
+    else if (state === "experimenting") setText("patch-action-status", "The evidence check is running. Submit a fix after its result is recorded.");
+    else if (state === "awaiting_approval") setText("patch-action-status", auditReady ? "Review the exact digest, then choose a decision." : "Enter a decision maker. The UTC decision time is filled automatically.");
+    else if (state === "applying") setText("patch-action-status", "The approved fix is ready for deterministic verification.");
+    else if (recovering) setText("patch-action-status", auditReady ? "Record who is returning this run to diagnosis." : "Enter a decision maker. The UTC decision time is filled automatically.");
+    else setText("patch-action-status", "Decision controls appear only when the server is waiting for a fix decision.");
+    setText("patch-safety-copy", patch.digest ? `Approval is bound to this exact server digest (${patch.digest}). A changed diff cannot reuse this approval.` : "No fix is proposed yet. Once recorded, approval will be bound to the server-calculated digest of the exact diff.");
+    renderProposalForm(run);
   }
 
   function changedLineCount(diff) {
@@ -463,9 +562,12 @@
 
   async function runExperiment() {
     if (!currentRun || !currentRun.run_id) return;
+    const validation = experimentValidation(currentRun);
+    if (validation) { setText("experiment-validation", validation); announce(`Evidence check not accepted: ${validation}`); return; }
+    const hypothesis = latestHypothesis(currentRun);
     try {
-      await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${ACTION_ENDPOINTS.experiment}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ kind: $("experiment-kind").value, command: $("experiment-command").value.trim() }) });
-      await loadRun(); announce("Guarded experiment completed and evidence was refreshed.");
+      await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${ACTION_ENDPOINTS.experiment}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ kind: $("experiment-kind").value, command: $("experiment-command").value.trim(), regression_test: $("experiment-regression").value.trim() || undefined, hypothesis_id: hypothesis && (hypothesis.id || hypothesis.hypothesis_id), hypothesis: hypothesis && hypothesis.hypothesis }) });
+      await loadRun(); announce("Evidence check completed and the server snapshot was refreshed.");
     } catch (error) { setText("experiment-status", `Blocked: ${error.message}`); announce(`Experiment not accepted: ${error.message}`); }
   }
 
@@ -486,6 +588,8 @@
 
   async function proposePatch() {
     if (!currentRun || !currentRun.run_id) return;
+    const validation = proposalValidation(currentRun);
+    if (validation) { setText("proposal-validation", validation); announce(`Fix proposal not accepted: ${validation}`); return; }
     const diff = $("diff-input").value; const regression_test = $("regression-input").value.trim();
     try {
       await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${ACTION_ENDPOINTS.propose}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ diff, regression_test }) });
@@ -495,7 +599,10 @@
 
   async function patchAction(action) {
     if (!currentRun || !currentRun.run_id) return;
-    const patch = mapping(currentRun.patch); const actor = $("actor-input").value.trim(); const timestamp = $("timestamp-input").value.trim();
+    const patch = mapping(currentRun.patch); const actor = $("actor-input").value.trim();
+    if (!actor) { setText("patch-action-status", "Enter a decision maker before choosing an action."); $("actor-input").focus(); return; }
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test($("timestamp-input").value)) $("timestamp-input").value = utcTimestampNow();
+    const timestamp = $("timestamp-input").value.trim();
     const payload = { actor, timestamp, ...(action === "recover" ? {} : { patch_digest: patch.digest }) };
     try {
       const endpoint = action === "request-diagnosis" ? ACTION_ENDPOINTS.diagnosis : ACTION_ENDPOINTS[action];
@@ -529,6 +636,14 @@
   if ($("diagnose-button")) $("diagnose-button").addEventListener("click", () => advanceStage("diagnose"));
   if ($("demo-start-button")) $("demo-start-button").addEventListener("click", startDemoRun);
   if ($("masthead-demo-button")) $("masthead-demo-button").addEventListener("click", startDemoRun);
+  ["experiment-kind", "experiment-command", "experiment-regression"].forEach((id) => {
+    if ($(id)) $(id).addEventListener("input", () => renderExperimentPanel(currentRun));
+    if ($(id)) $(id).addEventListener("change", () => renderExperimentPanel(currentRun));
+  });
+  ["diff-input", "regression-input"].forEach((id) => {
+    if ($(id)) $(id).addEventListener("input", () => renderProposalForm(currentRun));
+  });
+  if ($("actor-input")) $("actor-input").addEventListener("input", () => { if (currentRun) renderPatch(currentRun); });
   loadDemoStatus();
   loadRun();
 }());
