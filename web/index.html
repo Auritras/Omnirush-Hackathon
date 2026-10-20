@@ -13,10 +13,8 @@
       <header class="topbar" aria-label="ProofFix header">
         <a class="wordmark" href="/" aria-label="ProofFix home"><span class="wordmark-mark" aria-hidden="true">P</span><span>ProofFix</span></a>
           <div class="topbar-context">
-            <span class="eyebrow">OPERATE / PROOF CHAIN</span>
-            <span class="live-dot" aria-hidden="true"></span>
-            <span id="connection-label">Awaiting run snapshot</span>
-        </div>
+            <span class="eyebrow">Operate / proof chain</span>
+          </div>
         <div class="topbar-actions">
           <button class="button button-quiet" id="refresh-button" type="button" aria-label="Refresh run snapshot">Refresh</button>
           <button class="button button-amber" id="export-markdown" type="button" aria-label="Export evidence as Markdown" disabled>Export .md</button>
@@ -24,38 +22,38 @@
         </div>
       </header>
 
-      <main id="main-content" tabindex="-1">
+      <main id="main-content" tabindex="-1" aria-busy="true">
         <section class="masthead" aria-labelledby="page-title">
           <div>
-            <p id="surface-label" class="eyebrow">EVIDENCE CHAIN / DEMO</p>
+            <p id="surface-label" class="eyebrow">Evidence chain / demo</p>
             <h1 id="page-title">Operate the proof,<br><em>not the guess.</em></h1>
-            <p class="lede">Turn a failing test into a reproducible diagnosis, an approved patch, and a verification report — without letting an agent edit blindly.</p>
+            <p class="lede">Turn a failing test into a reproducible diagnosis, an approved patch, and a verification report. Keep agent changes tied to evidence.</p>
           </div>
           <div class="state-block" aria-label="Current run status">
-            <span class="state-kicker">CURRENT STATE</span>
-            <span id="mode-badge" class="badge badge-recorded">HOSTED DEMO · RECORDED EVIDENCE</span>
+            <span class="state-kicker">Current state</span>
+            <span id="mode-badge" class="badge badge-recorded">Hosted demo, recorded evidence</span>
             <strong id="run-state">No run selected</strong>
-            <span id="terminal-copy" class="state-copy">Load a run ID with <code>?run=run-…</code> to inspect server-owned evidence.</span>
-            <button id="masthead-demo-button" class="button button-amber masthead-cta" type="button" aria-label="Start the fixed ProofFix demo">Start the fixed demo</button>
+            <span id="terminal-copy" class="state-copy">Open a run ID with <code>?run=run-…</code> to review its evidence.</span>
+            <button id="masthead-demo-button" class="button button-amber masthead-cta" type="button" aria-label="Start a ProofFix demo run">Start a demo run</button>
           </div>
         </section>
 
         <section class="run-strip panel" aria-labelledby="run-context-heading">
           <div class="section-heading compact-heading">
-            <div><p class="eyebrow">RUN CONTEXT</p><h2 id="run-context-heading">The immutable intake</h2></div>
-            <span id="provenance-badge" class="badge badge-neutral">Waiting for data</span>
+            <div><p class="eyebrow">01 / TRIAGE</p><h2 id="run-context-heading">Reported issue</h2></div>
+            <span id="provenance-badge" class="badge badge-neutral">Waiting for run data</span>
           </div>
           <dl class="context-grid">
-            <div><dt>Repository</dt><dd id="repository-value">—</dd></div>
-            <div><dt>Branch</dt><dd id="branch-value">—</dd></div>
-            <div><dt>Commit</dt><dd id="commit-value">—</dd></div>
-            <div><dt>Run ID</dt><dd id="run-id-value">—</dd></div>
-            <div><dt>Provenance</dt><dd id="provenance-value">—</dd></div>
+            <div><dt>Repository</dt><dd id="repository-value">Not available</dd></div>
+            <div><dt>Branch</dt><dd id="branch-value">Not available</dd></div>
+            <div><dt>Commit</dt><dd id="commit-value">Not available</dd></div>
+            <div><dt>Run ID</dt><dd id="run-id-value">Not available</dd></div>
+            <div><dt>Provenance</dt><dd id="provenance-value">Not available</dd></div>
           </dl>
         </section>
 
-        <nav class="stage-rail panel" aria-label="Proof chain stages">
-          <div class="rail-intro"><span class="eyebrow">CHAIN</span><strong>Six gates</strong><span>Server-owned sequence</span></div>
+        <nav class="stage-rail panel" aria-label="Verification stages">
+          <div class="rail-intro"><span class="eyebrow">Workflow stages</span><strong>Six verification steps</strong><span>The server controls the order.</span></div>
           <ol id="stage-list">
             <li data-stage="triage"><span class="stage-index">01</span><span class="stage-name">Triage</span><span class="stage-status">Pending</span></li>
             <li data-stage="reproduction"><span class="stage-index">02</span><span class="stage-name">Reproduce</span><span class="stage-status">Pending</span></li>
@@ -66,7 +64,7 @@
           </ol>
         </nav>
 
-        <div id="live-status" class="sr-only" aria-live="polite" aria-atomic="true">Loading evidence chain.</div>
+        <div id="live-status" class="sr-only" aria-live="polite" aria-atomic="true">Loading run data.</div>
         <p id="terminal-status-key" class="sr-only">Terminal statuses: not_reproduced, blocked, verification_failed, verification_blocked, verified.</p>
 
         <section class="workspace-grid" aria-label="Evidence workspace">
@@ -75,17 +73,17 @@
               <div><p class="eyebrow">02 / REPRODUCE</p><h2 id="reproduction-heading">Reproduction record</h2></div>
               <div class="action-row"><button id="reproduce-button" class="button button-amber" type="button" disabled>Run reproduction</button><span id="reproduction-status" class="status-pill status-pending">Pending</span></div>
             </div>
-            <div class="command-box"><span class="field-label">EXACT COMMAND</span><code id="reproduction-command">No reproduction command recorded.</code></div>
+            <div class="command-box"><span class="field-label">Exact command</span><code id="reproduction-command">No reproduction command recorded.</code></div>
             <div class="metric-row">
-              <div><span class="field-label">EXIT CODE</span><strong id="reproduction-exit">—</strong></div>
-              <div><span class="field-label">DURATION</span><strong id="reproduction-duration">—</strong></div>
-              <div><span class="field-label">ASSESSMENT</span><strong id="reproduction-assessment">—</strong></div>
+              <div><span class="field-label">Exit code</span><strong id="reproduction-exit">Not available</strong></div>
+              <div><span class="field-label">Duration</span><strong id="reproduction-duration">Not available</strong></div>
+              <div><span class="field-label">Assessment</span><strong id="reproduction-assessment">Not available</strong></div>
             </div>
             <div class="log-grid">
-              <div><div class="log-heading"><span>stdout</span><span id="stdout-ref">—</span></div><pre id="stdout-log">No bounded stdout captured.</pre></div>
-              <div><div class="log-heading"><span>stderr</span><span id="stderr-ref">—</span></div><pre id="stderr-log">No bounded stderr captured.</pre></div>
+              <div><div class="log-heading"><span>stdout</span><span id="stdout-ref">Not available</span></div><pre id="stdout-log">No bounded stdout captured.</pre></div>
+              <div><div class="log-heading"><span>stderr</span><span id="stderr-ref">Not available</span></div><pre id="stderr-log">No bounded stderr captured.</pre></div>
             </div>
-            <div class="card-footer"><span class="field-label">ARTIFACT REFERENCES</span><div id="reproduction-artifacts" class="chip-list"><span class="muted">None recorded</span></div></div>
+            <div class="card-footer"><span class="field-label">Artifact references</span><div id="reproduction-artifacts" class="chip-list"><span class="muted">None recorded</span></div></div>
           </article>
 
           <article class="panel panel-hypotheses" aria-labelledby="hypotheses-heading">
@@ -96,8 +94,8 @@
            <article class="panel panel-experiment" aria-labelledby="experiment-heading">
              <div class="section-heading"><div><p class="eyebrow">04 / EVIDENCE CHECK</p><h2 id="experiment-heading">Focused evidence check</h2></div><span id="experiment-status" class="status-pill status-pending">Not started</span></div>
              <div class="workflow-context" id="experiment-context" aria-live="polite">
-               <span id="experiment-recommendation" class="recommendation-label" hidden>RECOMMENDED CHECK · PREFILLED FROM FIXTURE EVIDENCE</span>
-               <span class="field-label">WHAT ARE WE CHECKING?</span>
+               <span id="experiment-recommendation" class="recommendation-label" hidden>Recommended check, prefilled from fixture evidence</span>
+               <span class="field-label">What are we checking?</span>
                <strong id="experiment-hypothesis">Diagnosis context will appear after reproduction.</strong>
                <p id="experiment-context-detail">A recorded hypothesis and its evidence will guide the next check.</p>
              </div>
@@ -105,32 +103,32 @@
                <label for="experiment-kind">Check type<select id="experiment-kind" required><option value="">Choose a check type</option><option value="named_test_or_build">Run a named test or build</option><option value="dependency_runtime_inspection">Inspect a dependency or runtime</option><option value="proposed_regression_test">Run a proposed regression check</option><option value="parent_commit_comparison">Compare with the parent commit</option></select></label>
                <label for="experiment-command">Command to run<input id="experiment-command" type="text" required placeholder="python -m unittest tests.test_parser" aria-describedby="experiment-validation"></label>
                <label for="experiment-regression">Regression command <span class="optional-label">(only for a regression check)</span><input id="experiment-regression" type="text" placeholder="python -m unittest tests.test_parser" aria-describedby="experiment-validation"></label>
-               <p id="experiment-guidance" class="guardrail-note">The server runs one allowlisted check in the disposable reproduction snapshot. It does not run arbitrary scripts.</p>
+               <p id="experiment-guidance" class="guardrail-note">The server runs one approved check against the reproduction snapshot. It does not run arbitrary scripts.</p>
                <button id="experiment-button" class="button button-outline" type="button" disabled>Run evidence check</button>
                <p id="experiment-validation" class="form-note validation-note" role="alert" aria-live="polite">Choose a check type and enter its command when this stage is available.</p>
              </div>
            </article>
 
            <article class="panel panel-patch" aria-labelledby="patch-heading">
-             <div class="section-heading"><div><p class="eyebrow">05 / FIX REVIEW</p><h2 id="patch-heading">Proposed fix review</h2></div><div class="action-row"><span id="patch-recommendation" class="recommendation-label" hidden>RECOMMENDED PROPOSAL</span><span id="patch-status" class="status-pill status-pending">No proposal yet</span></div></div>
+             <div class="section-heading"><div><p class="eyebrow">05 / FIX REVIEW</p><h2 id="patch-heading">Proposed fix review</h2></div><div class="action-row"><span id="patch-recommendation" class="recommendation-label" hidden>Recommended proposal</span><span id="patch-status" class="status-pill status-pending">No proposal yet</span></div></div>
              <div class="workflow-context" id="patch-context" aria-live="polite">
-               <span class="field-label">WHY THIS FIX?</span>
+               <span class="field-label">Why this fix?</span>
                <strong id="patch-hypothesis">A diagnosis will provide the context for a proposed fix.</strong>
                <p id="patch-context-detail">The fix must address the recorded failure and include a distinct regression check.</p>
              </div>
-             <div class="patch-meta"><div><span class="field-label">DIGEST</span><code id="patch-digest">Calculated after proposal</code></div><div><span class="field-label">RISK</span><strong id="patch-risk">Calculated after proposal</strong></div><div><span class="field-label">CHANGED LINES</span><strong id="patch-lines">Calculated after proposal</strong></div></div>
-             <div class="safety-guarantee" id="patch-safety"><strong>Safety guarantee</strong><span id="patch-safety-copy">No fix is proposed yet. Once recorded, approval will be bound to the server-calculated digest of the exact diff.</span></div>
-             <div id="patch-empty-state" class="patch-empty-state"><strong>NO FIX PROPOSAL YET</strong><span>Draft a focused change and a distinct regression check below. The server will calculate the digest, changed files, risk, and line count after submission.</span></div>
-             <div id="patch-preview" hidden><div class="diff-wrap"><span class="field-label">RECORDED DIFF</span><pre id="patch-diff">No patch proposal recorded.</pre></div>
-             <div class="patch-details"><div><span class="field-label">CHANGED FILES</span><div id="changed-files" class="chip-list"><span class="muted">None recorded</span></div></div><div><span class="field-label">REGRESSION TEST</span><code id="regression-test">Required before proposal</code></div></div></div>
+             <div class="patch-meta"><div><span class="field-label">Digest</span><code id="patch-digest">Calculated after proposal</code></div><div><span class="field-label">Risk</span><strong id="patch-risk">Calculated after proposal</strong></div><div><span class="field-label">Changed lines</span><strong id="patch-lines">Calculated after proposal</strong></div></div>
+             <div class="safety-guarantee" id="patch-safety"><strong>Approval record</strong><span id="patch-safety-copy">No fix is proposed yet. When submitted, the server records a digest of the exact diff for approval.</span></div>
+             <div id="patch-empty-state" class="patch-empty-state"><strong>No fix proposal yet</strong><span>Draft a focused change and a distinct regression check below. After submission, review the digest, changed files, risk, and line count.</span></div>
+             <div id="patch-preview" hidden><div class="diff-wrap"><span class="field-label">Recorded diff</span><pre id="patch-diff">No patch proposal recorded.</pre></div>
+             <div class="patch-details"><div><span class="field-label">Changed files</span><div id="changed-files" class="chip-list"><span class="muted">None recorded</span></div></div><div><span class="field-label">Regression test</span><code id="regression-test">Required before proposal</code></div></div></div>
              <div class="proposal-form" id="proposal-form" aria-label="Fix proposal">
                <label for="diff-input">Proposed change (unified diff)<textarea id="diff-input" rows="7" required placeholder="diff --git ..." aria-describedby="proposal-validation"></textarea></label>
                <label for="regression-input">Regression check to run<input id="regression-input" type="text" required placeholder="python -m unittest tests.test_parser" aria-describedby="proposal-validation"></label>
-               <p class="guardrail-note">The server checks the diff stays within the recorded scope and that this command is explicit, safe, and different from the original failing command.</p>
+               <p class="guardrail-note">The diff must stay within the recorded scope. The regression command must be explicit, safe, and different from the failing command.</p>
                <button id="propose-button" class="button button-amber" type="button" disabled>Submit fix for review</button>
                <p id="proposal-validation" class="form-note validation-note" role="alert" aria-live="polite">Enter a unified diff and a regression check when diagnosis is ready.</p>
              </div>
-             <div class="approval-form" id="approval-form" aria-label="Fix decision audit details" hidden>
+             <div class="approval-form" id="approval-form" aria-label="Fix decision details" hidden>
                <label for="actor-input">Decision maker<input id="actor-input" name="actor" type="text" required autocomplete="off" placeholder="operator name" aria-describedby="patch-action-status"></label>
                <label for="timestamp-input">UTC decision time<input id="timestamp-input" name="timestamp" type="text" autocomplete="off" readonly aria-describedby="patch-action-status" placeholder="Filled automatically"></label>
              </div>
@@ -140,17 +138,17 @@
           </article>
 
           <article class="panel panel-verification" aria-labelledby="verification-heading">
-            <div class="section-heading"><div><p class="eyebrow">06 / VERIFY</p><h2 id="verification-heading">Deterministic checks</h2></div><div class="action-row"><button id="verify-button" class="button button-outline" type="button" disabled aria-label="Run server verification">Run verification</button><span id="verification-status" class="status-pill status-pending">Not run</span></div></div>
+            <div class="section-heading"><div><p class="eyebrow">06 / VERIFY</p><h2 id="verification-heading">Verification checks</h2></div><div class="action-row"><button id="verify-button" class="button button-outline" type="button" disabled aria-label="Run verification checks">Run verification</button><span id="verification-status" class="status-pill status-pending">Not run</span></div></div>
             <ol id="verification-list" class="verification-list"><li class="empty-state">Verification checks will appear here in execution order.</li></ol>
           </article>
         </section>
 
         <aside class="evidence-drawer panel" aria-labelledby="evidence-heading">
-          <div class="section-heading"><div><p class="eyebrow">EVIDENCE DRAWER</p><h2 id="evidence-heading">Trace every claim</h2></div><span id="evidence-count" class="count-label">0 records</span></div>
+          <div class="section-heading"><div><p class="eyebrow">Evidence drawer</p><h2 id="evidence-heading">Trace every claim</h2></div><span id="evidence-count" class="count-label">0 records</span></div>
           <div class="evidence-columns"><section><h3>Files &amp; lines</h3><div id="file-evidence" class="evidence-list"><p class="empty-state">No file evidence recorded.</p></div></section><section><h3>Commands &amp; artifacts</h3><div id="command-evidence" class="evidence-list"><p class="empty-state">No command evidence recorded.</p></div></section><section><h3>Claims</h3><div id="claim-evidence" class="evidence-list"><p class="empty-state">No claims recorded.</p></div></section><section><h3>OmniRush sessions</h3><div id="session-evidence" class="evidence-list"><p class="empty-state">No sessions recorded.</p></div></section></div>
         </aside>
       </main>
-      <footer class="footer"><span>ProofFix / evidence control room</span><span>Snapshots and events remain authoritative</span></footer>
+      <footer class="footer"><span>ProofFix / evidence workspace</span><span>Run snapshots and events show the recorded workflow.</span></footer>
     </div>
     <script src="/app.js" defer></script>
   </body>

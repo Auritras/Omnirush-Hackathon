@@ -11,11 +11,11 @@
     ["verification", "Verify"]
   ];
   const TERMINAL_COPY = {
-    not_reproduced: "The reported failure was not reproduced. No success claim is available.",
-    blocked: "The evidence chain is blocked. The cause and outcome remain unverified.",
-    verification_failed: "Verification failed. The patch is not verified and must not be treated as fixed.",
-    verification_blocked: "Verification is blocked. The patch remains unverified.",
-    verified: "All server-recorded verification checks passed. The patch is verified for this run."
+    not_reproduced: "The reported failure was not reproduced. This run does not support a fix claim.",
+    blocked: "The workflow is blocked. The cause and outcome are not verified.",
+    verification_failed: "Verification failed. The patch is not verified.",
+    verification_blocked: "Verification is blocked. The patch is not verified.",
+    verified: "All recorded verification checks passed. The patch is verified for this run."
   };
   const ACTION_ENDPOINTS = { approve: "/approve", reject: "/reject", diagnosis: "/request-diagnosis", recover: "/return-to-diagnosis", verify: "/verify", export: "/export", experiment: "/experiment", propose: "/propose" };
   const STAGE_ENDPOINTS = { reproduce: "/reproduce", diagnose: "/diagnose" };
@@ -23,8 +23,9 @@
   let currentEvents = [];
 
   const $ = (id) => document.getElementById(id);
-  const text = (value, fallback = "—") => value === null || value === undefined || value === "" ? fallback : String(value);
+  const text = (value, fallback = "Not available") => value === null || value === undefined || value === "" ? fallback : String(value);
   const setText = (id, value, fallback) => { const node = $(id); if (node) node.textContent = text(value, fallback); return node; };
+  const setBusy = (busy) => { const node = $("main-content"); if (node) node.setAttribute("aria-busy", String(Boolean(busy))); };
   const clear = (node) => { while (node && node.firstChild) node.removeChild(node.firstChild); };
   const create = (tag, value, className) => { const node = document.createElement(tag); if (className) node.className = className; if (value !== undefined) node.textContent = text(value, ""); return node; };
   const listValue = (value) => Array.isArray(value) ? value : [];
@@ -58,7 +59,7 @@
   function hypothesisEvidence(hypothesis) {
     if (!hypothesis) return "A recorded diagnosis will provide the context for this check.";
     const supporting = listValue(hypothesis.supporting_evidence).map((item) => mapping(item).summary || item).filter(Boolean);
-    return supporting.length ? `Supporting evidence: ${supporting.join("; ")}` : "No supporting evidence was recorded yet; treat the result as exploratory.";
+    return supporting.length ? `Supporting evidence: ${supporting.join(", ")}` : "No supporting evidence is recorded yet. Treat this as an exploratory check.";
   }
 
   function utcTimestampNow() {
@@ -91,30 +92,32 @@
   }
 
   async function loadRun() {
+    setBusy(true);
     const runId = runIdFromUrl();
     if (!runId) {
       currentRun = null;
       currentEvents = [];
       renderEmpty();
-      announce("No run selected. Add a run ID to the URL.");
+      announce("No run selected. Add a run ID to the URL, or start a demo run.");
       await loadDemoStatus();
+      setBusy(false);
       return;
     }
-    setText("connection-label", "Reading server snapshot…");
+    announce("Loading run data.");
     try {
       const encoded = encodeURIComponent(runId);
       const result = await Promise.all([api(`/api/runs/${encoded}`), api(`/api/runs/${encoded}/events`)]);
       currentRun = result[0];
       currentEvents = listValue(result[1].events);
       render(currentRun, currentEvents);
-      announce(`Snapshot refreshed for ${runId}.`);
-      setText("connection-label", "Snapshot current");
+      announce(`Run snapshot refreshed for ${runId}.`);
     } catch (error) {
       currentRun = null;
       currentEvents = [];
       renderEmpty();
-      setText("connection-label", "Snapshot unavailable");
-      announce(`Snapshot unavailable: ${error.message}`);
+      announce(`Run snapshot unavailable: ${error.message}`);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -127,10 +130,10 @@
       demoEnabled = Boolean(status.enabled);
       hostedDemo = hosted;
       button.disabled = !demoEnabled || demoStartInFlight;
-      button.textContent = demoStartInFlight ? "Starting demo…" : status.enabled && (currentRun || runIdFromUrl()) ? "Start a new demo" : status.enabled ? "Start the fixed demo" : "Demo unavailable";
-      button.title = status.enabled ? "Create the fixed recorded demo run" : "This server is running in local mode";
-      setText("surface-label", hosted ? "EVIDENCE CHAIN / HOSTED DEMO" : status.enabled ? "EVIDENCE CHAIN / LOCAL DEMO" : "EVIDENCE CHAIN / LOCAL MODE");
-      setText("mode-badge", hosted ? "HOSTED DEMO · RECORDED EVIDENCE" : status.enabled ? "LOCAL DEMO · RECORDED EVIDENCE" : "LOCAL MODE");
+      button.textContent = demoStartInFlight ? "Starting demo..." : status.enabled && (currentRun || runIdFromUrl()) ? "Start another demo run" : status.enabled ? "Start a demo run" : "Demo unavailable";
+      button.title = status.enabled ? "Create a recorded ProofFix demo run" : "ProofFix is running in local mode";
+      setText("surface-label", hosted ? "Evidence chain / hosted demo" : status.enabled ? "Evidence chain / local demo" : "Evidence chain / local mode");
+      setText("mode-badge", hosted ? "Hosted demo, recorded evidence" : status.enabled ? "Local demo, recorded evidence" : "Local mode");
       $("mode-badge").className = `badge ${status.enabled ? "badge-recorded" : "badge-neutral"}`;
       if (currentRun) {
         applyDemoDefaults(currentRun);
@@ -142,8 +145,8 @@
       hostedDemo = false;
       button.disabled = true;
       button.textContent = "Demo unavailable";
-      setText("surface-label", "EVIDENCE CHAIN / LOCAL MODE");
-      setText("mode-badge", "LOCAL MODE");
+      setText("surface-label", "Evidence chain / local mode");
+      setText("mode-badge", "Local mode");
       $("mode-badge").className = "badge badge-neutral";
     }
   }
@@ -153,14 +156,14 @@
     if (!button || demoStartInFlight || !demoEnabled) return;
     demoStartInFlight = true;
     button.disabled = true;
-    button.textContent = "Starting demo…";
+    button.textContent = "Starting demo...";
     try {
       const run = await api("/api/demo/start", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: "{}" });
       const url = new URL(window.location.href);
       url.searchParams.set("run", run.run_id);
       window.history.replaceState({}, "", url);
       await loadRun();
-      announce(`Fixed demo run ${run.run_id} started.`);
+      announce(`Demo run ${run.run_id} started.`);
     } catch (error) {
       announce(`Demo run could not start: ${error.message}`);
     } finally {
@@ -173,19 +176,18 @@
 
   function renderEmpty() {
     setText("run-state", "No run selected");
-    setText("terminal-copy", "Start the fixed demo to watch reproduction, diagnosis, approval, and verification happen in order.");
+    setText("terminal-copy", "Start a demo run to review reproduction, diagnosis, approval, and verification in order.");
     setText("provenance-badge", "Demo ready");
     $("provenance-badge").className = "badge badge-neutral";
-    ["repository-value", "branch-value", "commit-value", "run-id-value", "provenance-value"].forEach((id) => setText(id, "—"));
+    ["repository-value", "branch-value", "commit-value", "run-id-value", "provenance-value"].forEach((id) => setText(id, "Not available"));
     ["export-markdown", "export-json", "reproduce-button", "diagnose-button", "approve-button", "reject-button", "diagnosis-button", "recovery-button", "verify-button", "experiment-button", "propose-button"].forEach((id) => { if ($(id)) $(id).disabled = true; });
-    setText("connection-label", "Awaiting run snapshot");
     if ($("actor-input")) $("actor-input").value = "";
     if ($("timestamp-input")) $("timestamp-input").value = "";
     if ($("diff-input")) $("diff-input").value = "";
     if ($("regression-input")) $("regression-input").value = "";
     if ($("experiment-command")) $("experiment-command").value = "";
     if ($("experiment-regression")) $("experiment-regression").value = "";
-    setText("patch-action-status", "Start the demo to unlock the first evidence gate.");
+    setText("patch-action-status", "Start a demo run to begin the evidence review.");
     renderReproduction({ state: "created", input: {} }, []);
     renderHypotheses({ hypotheses: [] });
     renderPatch({ state: "created", patch: null });
@@ -220,12 +222,12 @@
     const repo = repositorySnapshot(run);
     const state = text(run.state, "unknown");
     setText("run-state", state.replaceAll("_", " "));
-    setText("terminal-copy", TERMINAL_COPY[state] || `The run is ${state.replaceAll("_", " ")}. Continue only through server-authorized transitions.`);
+    setText("terminal-copy", TERMINAL_COPY[state] || `The run is ${state.replaceAll("_", " ")}. Review the recorded result before taking the next action.`);
     setText("repository-value", repo.repository || repo.path || input.repository_path);
     setText("branch-value", repo.branch || input.branch);
     setText("commit-value", repo.commit || repo.commit_sha || input.commit_sha);
     setText("run-id-value", run.run_id);
-    const provenance = input.provenance || input.mode || run.provenance || run.mode || (state === "verified" ? "live OmniRush" : "—");
+    const provenance = input.provenance || input.mode || run.provenance || run.mode || (state === "verified" ? "live OmniRush" : "Not available");
     setText("provenance-value", provenance);
     setText("provenance-badge", provenance);
     $("provenance-badge").className = `badge ${String(provenance).toLowerCase().includes("recorded") || String(provenance).toLowerCase().includes("demo") ? "badge-recorded" : "badge-live"}`;
@@ -300,12 +302,12 @@
     const input = snapshotInput(run);
     setText("reproduction-command", record.command || input.command, "No reproduction command recorded.");
     setText("reproduction-exit", record.exit_code);
-    setText("reproduction-duration", record.duration_ms === undefined || record.duration_ms === null ? "—" : `${record.duration_ms} ms`);
+    setText("reproduction-duration", record.duration_ms === undefined || record.duration_ms === null ? "Not available" : `${record.duration_ms} ms`);
     setText("reproduction-assessment", record.reason || record.outcome || record.status);
     setText("stdout-log", record.stdout || record.stdout_summary, "No bounded stdout captured.");
     setText("stderr-log", record.stderr || record.stderr_summary, "No bounded stderr captured.");
-    setText("stdout-ref", record.stdout_ref || record.stdout_artifact_ref, "—");
-    setText("stderr-ref", record.stderr_ref || record.stderr_artifact_ref, "—");
+    setText("stdout-ref", record.stdout_ref || record.stdout_artifact_ref, "Not available");
+    setText("stderr-ref", record.stderr_ref || record.stderr_artifact_ref, "Not available");
     chips($("reproduction-artifacts"), [record.stdout_ref, record.stderr_ref, record.command_ref].filter(Boolean));
   }
 
@@ -342,27 +344,27 @@
       card.appendChild(meta);
       card.appendChild(renderExperiment(hypothesis, listValue(run.experiments)));
       const pair = create("div", undefined, "evidence-pair");
-      pair.appendChild(evidenceColumn("SUPPORTING EVIDENCE", hypothesis.supporting_evidence));
-      pair.appendChild(evidenceColumn("CONTRADICTING EVIDENCE", hypothesis.contradicting_evidence));
+      pair.appendChild(evidenceColumn("Supporting evidence", hypothesis.supporting_evidence));
+      pair.appendChild(evidenceColumn("Contradicting evidence", hypothesis.contradicting_evidence));
       card.appendChild(pair); list.appendChild(card);
     });
   }
 
   function renderExperiment(hypothesis, experiments) {
     const block = create("div", undefined, "experiment-block");
-    block.appendChild(create("span", "PROPOSED EXPERIMENT", "field-label"));
+    block.appendChild(create("span", "Proposed experiment", "field-label"));
     block.appendChild(create("p", hypothesis.experiment || "No experiment proposed."));
     const matching = experiments.filter((result) => {
       const ids = [hypothesis.id, hypothesis.hypothesis_id, hypothesis.session_id].filter(Boolean).map(String);
       return (result.hypothesis_id && ids.includes(String(result.hypothesis_id))) || (result.hypothesis && result.hypothesis === hypothesis.hypothesis);
     });
     const observed = matching[matching.length - 1];
-    block.appendChild(create("span", "OBSERVED RESULT", "field-label"));
+    block.appendChild(create("span", "Observed result", "field-label"));
     if (!observed) {
       block.appendChild(create("p", "No matching execution recorded yet.", "experiment-empty"));
       return block;
     }
-    const resultLine = `${text(observed.status, "unknown")} · exit ${text(observed.exit_code)} · digest ${text(observed.output_digest)}`;
+    const resultLine = `${text(observed.status, "unknown")}, exit ${text(observed.exit_code)}, digest ${text(observed.output_digest)}`;
     block.appendChild(create("p", resultLine, "experiment-result"));
     if (observed.command) block.appendChild(create("code", Array.isArray(observed.command) ? observed.command.join(" ") : observed.command));
     const output = observed.stdout || observed.stderr;
@@ -372,7 +374,7 @@
 
   function experimentValidation(run) {
     if (!run || !run.run_id) return "Start a run before choosing an evidence check.";
-    if (!EXPERIMENT_STATES.includes(text(run.state))) return "Evidence checks unlock after a diagnosis is recorded by the server.";
+    if (!EXPERIMENT_STATES.includes(text(run.state))) return "Evidence checks open after a diagnosis is recorded.";
     const kind = $("experiment-kind") ? $("experiment-kind").value : "";
     const command = $("experiment-command") ? $("experiment-command").value.trim() : "";
     const regression = $("experiment-regression") ? $("experiment-regression").value.trim() : "";
@@ -404,7 +406,7 @@
     if ($("experiment-validation")) {
       const experiments = listValue(run && run.experiments);
       const latest = experiments[experiments.length - 1];
-      const message = validation || (latest ? `Latest result: ${text(latest.status, "recorded")} · output digest ${text(latest.output_digest)}` : "Ready when the check type and command are valid.");
+      const message = validation || (latest ? `Latest result: ${text(latest.status, "recorded")}, output digest ${text(latest.output_digest)}` : "Ready when the check type and command are valid.");
       setText("experiment-validation", message);
       $("experiment-validation").className = `form-note validation-note${validation ? " has-error" : ""}`;
     }
@@ -414,12 +416,12 @@
 
   function proposalValidation(run) {
     if (!run || !run.run_id) return "Start a run before proposing a fix.";
-    if (!PATCH_PROPOSAL_STATES.includes(text(run.state))) return "A fix can be submitted after diagnosis, while the server accepts proposals.";
+    if (!PATCH_PROPOSAL_STATES.includes(text(run.state))) return "Submit a fix after diagnosis is recorded.";
     const diff = $("diff-input") ? $("diff-input").value.trim() : "";
     const regression = $("regression-input") ? $("regression-input").value.trim() : "";
     if (!diff) return "Add the proposed change as a unified diff.";
     if (!(diff.includes("diff --git") || (diff.includes("--- ") && diff.includes("+++ ")))) return "Use a unified diff with file headers (for example, diff --git or --- / +++).";
-    if (!regression) return "Enter the distinct regression check the server should run.";
+    if (!regression) return "Enter the regression command to run.";
     return "";
   }
 
@@ -432,7 +434,7 @@
     if ($("proposal-form")) $("proposal-form").hidden = !canPropose;
     if ($("propose-button")) $("propose-button").disabled = Boolean(validation) || !canPropose;
     if ($("proposal-validation")) {
-      setText("proposal-validation", validation || "Ready to submit. The server will calculate and persist the safety digest.");
+      setText("proposal-validation", validation || "Ready to submit. The diff digest will be recorded for review.");
       $("proposal-validation").className = `form-note validation-note${validation ? " has-error" : ""}`;
     }
   }
@@ -475,18 +477,18 @@
     if ($("recovery-button")) $("recovery-button").disabled = !recovering || !auditReady;
     if ($("verify-button")) $("verify-button").disabled = state !== "applying";
     if (approval.action) setText("patch-action-status", `${approval.action} by ${text(approval.actor)} at ${text(approval.timestamp)}.`);
-    else if (state === "diagnosing") setText("patch-action-status", "Add a focused diff and a distinct regression check. The server will calculate its digest before review.");
+    else if (state === "diagnosing") setText("patch-action-status", "Add a focused diff and a distinct regression check. The diff digest will be recorded before review.");
     else if (state === "experimenting") setText("patch-action-status", "The evidence check is running. Submit a fix after its result is recorded.");
     else if (state === "awaiting_approval") setText("patch-action-status", auditReady ? "Review the exact digest, then choose a decision." : "Enter a decision maker. The UTC decision time is filled automatically.");
-    else if (state === "applying") setText("patch-action-status", "The approved fix is ready for deterministic verification.");
+    else if (state === "applying") setText("patch-action-status", "The approved fix is ready for verification.");
     else if (recovering) setText("patch-action-status", auditReady ? "Record who is returning this run to diagnosis." : "Enter a decision maker. The UTC decision time is filled automatically.");
-    else setText("patch-action-status", "Decision controls appear only when the server is waiting for a fix decision.");
-    setText("patch-safety-copy", patch.digest ? `Approval is bound to this exact server digest (${patch.digest}). A changed diff cannot reuse this approval.` : "No fix is proposed yet. Once recorded, approval will be bound to the server-calculated digest of the exact diff.");
+    else setText("patch-action-status", "Decision controls appear when the run is waiting for a fix decision.");
+    setText("patch-safety-copy", patch.digest ? `Approval uses this exact diff digest (${patch.digest}). A changed diff needs a new review.` : "No fix is proposed yet. When submitted, the diff digest is recorded for approval.");
     renderProposalForm(run);
   }
 
   function changedLineCount(diff) {
-    if (!diff) return "—";
+    if (!diff) return "Not available";
     const additions = String(diff).split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++" )).length;
     const removals = String(diff).split("\n").filter((line) => line.startsWith("-") && !line.startsWith("---" )).length;
     return `+${additions} / −${removals}`;
@@ -502,7 +504,7 @@
       const item = create("li", undefined, "verification-item");
       const body = create("div"); body.appendChild(create("strong", check.name || "Unnamed check")); body.appendChild(create("code", check.command || "No command recorded."));
       item.appendChild(body); item.appendChild(create("span", text(check.status, "pending"), `check-status ${check.status === "passed" || check.status === "ok" ? "pass" : check.status === "blocked" ? "blocked" : check.status === "failed" ? "fail" : "pending"}`));
-      if (check.exit_code !== undefined || check.duration_ms !== undefined) item.appendChild(create("span", `exit ${text(check.exit_code)} · ${text(check.duration_ms)} ms`, "verification-detail"));
+      if (check.exit_code !== undefined || check.duration_ms !== undefined) item.appendChild(create("span", `exit ${text(check.exit_code)}, ${text(check.duration_ms)} ms`, "verification-detail"));
       const detail = mapping(check.details).error || mapping(check.details).failure || check.failure_detail;
       if (detail) item.appendChild(create("p", detail, "verification-detail"));
       list.appendChild(item);
@@ -576,7 +578,7 @@
     claims.forEach((claim) => {
       const record = create("div", undefined, "evidence-record claim-record");
       record.appendChild(create("strong", claim.summary));
-      if (claim.refs.length) record.appendChild(create("span", `References: ${claim.refs.join(" · ")}`));
+      if (claim.refs.length) record.appendChild(create("span", `References: ${claim.refs.join(", ")}`));
       else record.appendChild(create("span", "No supporting reference recorded."));
       node.appendChild(record);
     });
@@ -584,7 +586,7 @@
 
   function renderEvidenceList(node, values, empty) {
     clear(node); if (!values.length) { node.appendChild(create("p", empty, "empty-state")); return; }
-    values.forEach((value) => { const record = create("div", undefined, "evidence-record"); record.appendChild(create("strong", value)); record.appendChild(create("span", "Recorded by the server snapshot.")); node.appendChild(record); });
+    values.forEach((value) => { const record = create("div", undefined, "evidence-record"); record.appendChild(create("strong", value)); record.appendChild(create("span", "Recorded in the run snapshot.")); node.appendChild(record); });
   }
 
   async function exportReport(format) {
@@ -602,8 +604,8 @@
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      setText("patch-action-status", `Downloaded ${extension.toUpperCase()} evidence report.`);
-      announce(`${extension.toUpperCase()} evidence download completed.`);
+      setText("patch-action-status", `Downloaded the ${extension} evidence report.`);
+      announce(`${extension} evidence download completed.`);
     } catch (error) { announce(`Export failed: ${error.message}`); setText("patch-action-status", `Export failed: ${error.message}`); }
   }
 
@@ -614,7 +616,7 @@
     const hypothesis = latestHypothesis(currentRun);
     try {
       await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${ACTION_ENDPOINTS.experiment}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ kind: $("experiment-kind").value, command: $("experiment-command").value.trim(), regression_test: $("experiment-regression").value.trim() || undefined, hypothesis_id: hypothesis && (hypothesis.id || hypothesis.hypothesis_id), hypothesis: hypothesis && hypothesis.hypothesis }) });
-      await loadRun(); announce("Evidence check completed and the server snapshot was refreshed.");
+      await loadRun(); announce("Evidence check completed. Run snapshot refreshed.");
     } catch (error) { setText("experiment-status", `Blocked: ${error.message}`); announce(`Experiment not accepted: ${error.message}`); }
   }
 
@@ -655,7 +657,7 @@
       const endpoint = action === "request-diagnosis" ? ACTION_ENDPOINTS.diagnosis : ACTION_ENDPOINTS[action];
       await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify(payload) });
       await loadRun();
-      announce(`Server accepted ${action.replaceAll("-", " ")}; snapshot and events refreshed.`);
+      announce(`Action accepted. Run snapshot and events refreshed after ${action.replaceAll("-", " ")}.`);
     } catch (error) { setText("patch-action-status", `Action not accepted: ${error.message}`); announce(`Action not accepted: ${error.message}`); }
   }
 
@@ -665,7 +667,7 @@
     try {
       await api(`/api/runs/${encodeURIComponent(currentRun.run_id)}${ACTION_ENDPOINTS.verify}`, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ original_failure_command: plan.original_failure_command || input.command, regression_test: plan.regression_test || patch.regression_test, relevant_tests: listValue(plan.relevant_tests), broader_suite: plan.broader_suite }) });
       await loadRun();
-      announce("Verification request accepted; snapshot and events refreshed.");
+      announce("Verification request accepted. Run snapshot and events refreshed.");
     } catch (error) { announce(`Verification request not accepted: ${error.message}`); }
   }
 

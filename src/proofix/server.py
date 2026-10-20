@@ -35,6 +35,12 @@ STATIC_ASSETS = {
     "index.html": "text/html; charset=utf-8",
     "styles.css": "text/css; charset=utf-8",
     "app.js": "text/javascript; charset=utf-8",
+    "fonts/ibm-plex-sans-400.woff2": "font/woff2",
+    "fonts/ibm-plex-sans-600.woff2": "font/woff2",
+    "fonts/ibm-plex-sans-700.woff2": "font/woff2",
+    "fonts/ibm-plex-mono-400.woff2": "font/woff2",
+    "fonts/OFL-IBM-Plex-Sans.txt": "text/plain; charset=utf-8",
+    "fonts/OFL-IBM-Plex-Mono.txt": "text/plain; charset=utf-8",
 }
 
 
