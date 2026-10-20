@@ -31,6 +31,22 @@
   const mapping = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const EXPERIMENT_STATES = ["diagnosing", "experimenting"];
   const PATCH_PROPOSAL_STATES = ["diagnosing", "experimenting"];
+  const RECOMMENDED_DEMO_COMMAND = "python -m unittest tests.test_parser";
+  const RECOMMENDED_DEMO_DIFF = [
+    "diff --git a/parser.py b/parser.py",
+    "--- a/parser.py",
+    "+++ b/parser.py",
+    "@@ -12,7 +12,7 @@",
+    "     if \"=\" not in line:",
+    "         raise ParseError(\"expected key=value\")",
+    "     # BUG: values containing an equals sign are split into too many pieces.",
+    "-    key, value = line.split(\"=\")",
+    "+    key, value = line.split(\"=\", 1)",
+    "     if not key.strip():",
+    "         raise ParseError(\"missing key\")",
+    "     return key.strip(), value.strip()",
+  ].join("\n") + "\n";
+  let hostedDemo = false;
 
   function latestHypothesis(run) {
     const hypotheses = listValue(run && run.hypotheses);
@@ -45,6 +61,19 @@
 
   function utcTimestampNow() {
     return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+
+  function applyDemoDefaults(run) {
+    if (!hostedDemo || !run || !run.run_id) return;
+    const state = text(run.state, "created");
+    if (EXPERIMENT_STATES.includes(state)) {
+      if ($("experiment-kind") && !$("experiment-kind").value) $("experiment-kind").value = "named_test_or_build";
+      if ($("experiment-command") && !$("experiment-command").value.trim()) $("experiment-command").value = RECOMMENDED_DEMO_COMMAND;
+    }
+    if (PATCH_PROPOSAL_STATES.includes(state)) {
+      if ($("diff-input") && !$("diff-input").value.trim()) $("diff-input").value = RECOMMENDED_DEMO_DIFF;
+      if ($("regression-input") && !$("regression-input").value.trim()) $("regression-input").value = RECOMMENDED_DEMO_COMMAND;
+    }
   }
 
   async function api(path, options) {
@@ -93,6 +122,7 @@
     try {
       const status = await api("/api/demo");
       const hosted = Boolean(status.enabled && status.public_demo);
+      hostedDemo = hosted;
       buttons.forEach((button) => {
         button.disabled = !status.enabled;
         if (button.id === "demo-start-button") button.textContent = status.enabled ? "Start demo run" : "Demo unavailable";
@@ -101,7 +131,13 @@
       setText("surface-label", hosted ? "EVIDENCE CHAIN / HOSTED DEMO" : status.enabled ? "EVIDENCE CHAIN / LOCAL DEMO" : "EVIDENCE CHAIN / LOCAL MODE");
       setText("mode-badge", hosted ? "HOSTED DEMO · RECORDED EVIDENCE" : status.enabled ? "LOCAL DEMO · RECORDED EVIDENCE" : "LOCAL MODE");
       $("mode-badge").className = `badge ${status.enabled ? "badge-recorded" : "badge-neutral"}`;
+      if (currentRun) {
+        applyDemoDefaults(currentRun);
+        renderExperimentPanel(currentRun);
+        renderPatch(currentRun);
+      }
     } catch (_) {
+      hostedDemo = false;
       buttons.forEach((button) => {
         button.disabled = true;
         if (button.id === "demo-start-button") button.textContent = "Demo unavailable";
@@ -343,10 +379,12 @@
   }
 
   function renderExperimentPanel(run) {
+    applyDemoDefaults(run);
     const hypothesis = latestHypothesis(run);
     setText("experiment-hypothesis", hypothesis ? hypothesis.hypothesis : run && run.run_id ? "Diagnosis context is ready for a focused check." : "Diagnosis context will appear after reproduction.");
     setText("experiment-context-detail", hypothesisEvidence(hypothesis));
     const state = text(run && run.state, "created");
+    if ($("experiment-recommendation")) $("experiment-recommendation").hidden = !hostedDemo || !EXPERIMENT_STATES.includes(state);
     const validation = experimentValidation(run);
     const kind = $("experiment-kind") ? $("experiment-kind").value : "";
     if ($("experiment-kind")) $("experiment-kind").setAttribute("aria-invalid", String(!kind && EXPERIMENT_STATES.includes(state)));
@@ -402,8 +440,10 @@
   }
 
   function renderPatch(run) {
+    applyDemoDefaults(run);
     const patch = mapping(run.patch); const approval = mapping(patch.approval || patch.decision);
     const state = text(run.state);
+    if ($("patch-recommendation")) $("patch-recommendation").hidden = !hostedDemo || !PATCH_PROPOSAL_STATES.includes(state);
     const hypothesis = latestHypothesis(run);
     setText("patch-hypothesis", hypothesis ? hypothesis.hypothesis : "A diagnosis will provide the context for a proposed fix.");
     setText("patch-context-detail", hypothesis ? hypothesisEvidence(hypothesis) : "The fix must address the recorded failure and include a distinct regression check.");
@@ -423,6 +463,7 @@
     if ($("approval-form")) $("approval-form").hidden = !needsAudit;
     if ($("decision-controls")) $("decision-controls").hidden = !awaitingDecision;
     if ($("recovery-controls")) $("recovery-controls").hidden = !recovering;
+    if (needsAudit && hostedDemo && $("actor-input") && !$("actor-input").value.trim()) $("actor-input").value = "demo-judge";
     if (needsAudit && $("timestamp-input") && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test($("timestamp-input").value)) $("timestamp-input").value = utcTimestampNow();
     const actorReady = Boolean($("actor-input") && $("actor-input").value.trim());
     const auditReady = actorReady && Boolean($("timestamp-input") && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test($("timestamp-input").value));
